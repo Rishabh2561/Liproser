@@ -1,0 +1,51 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private Liproser data
+data/private/
+data/imports/
+uploads/
+exports/
+backups/
+*.linkedin.pdf
+*.linkedin.csv
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+pnpm-debug.log*
+
+# Build, cache, and local services
+dist/
+build/
+.cache/
+.turbo/
+.docker/
+postgres-data/
+redis-data/
+object-store-data/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

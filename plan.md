@@ -7,7 +7,7 @@
 **First user:** the founder/operator using Liproser for their own LinkedIn workflow
 
 **Later customer:** solo professionals with the same validated workflow needs
-**Related documents:** [Technical architecture](architecture.md) · [AI agent design](agents.md)
+**Related documents:** [README](README.md) · [Stepwise roadmap](ROADMAP.md) · [Technical architecture](architecture.md) · [AI agent design](AGENTS.md)
 
 ## 1. Product thesis
 
@@ -298,4 +298,4 @@ Test willingness to pay against approved posts, hours saved, and retention. Do n
 - State transitions cannot bypass approval, including retries and scheduled work.
 - Tenant export and deletion cover relational data, vectors, objects, tokens, cached prompts, and derived swipe patterns.
 - `architecture.md` uses the same statuses, resources, retention rules, and phase boundaries.
-- `agents.md` gives agents no authority over publishing, approval, billing, or tenant access.
+- `AGENTS.md` gives agents no authority over publishing, approval, billing, or tenant access.

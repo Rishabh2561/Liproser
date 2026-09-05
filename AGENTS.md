@@ -1,7 +1,19 @@
 # Liproser AI Agent Design
 
 **Status:** implementation baseline
-**Related documents:** [Product plan](plan.md) · [Technical architecture](architecture.md)
+**Related documents:** [README](README.md) · [Roadmap](ROADMAP.md) · [Product plan](plan.md) · [Technical architecture](architecture.md)
+
+## 0. Repository working rules
+
+- Implement one roadmap step at a time; do not start later subsystems before the current step's exit gate passes.
+- Before editing, inspect the current workspace and preserve unrelated user changes.
+- Add or update tests/evaluation fixtures with every feature. Run targeted tests, the full available suite, and `scripts/verify-repository.ps1` before committing.
+- Review staged changes for secrets and private profile/post/analytics data. Never commit `.env`, OAuth tokens, API keys, profile exports, post archives, metrics exports, or database/object-store contents.
+- Use `.env.example` for configuration contracts and keep real values in the ignored `.env` or a secret manager.
+- Commit cohesive tested changes with descriptive messages. Push `main` only after verification succeeds; never rewrite shared history unless the user explicitly requests it.
+- No scraper, LinkedIn DOM automation, unofficial API, autonomous approval, or autonomous publishing may be introduced.
+- Keep founder-specific data and preferences in private workspace records, not source code, prompts, fixtures, or defaults.
+- Update README, ROADMAP, architecture, and agent contracts when a feature changes a public interface, state transition, data category, provider capability, or compliance boundary.
 
 ## 1. Purpose and operating model
 

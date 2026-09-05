@@ -1,7 +1,7 @@
 # Liproser Technical Architecture
 
 **Status:** implementation baseline
-**Related documents:** [Product plan](plan.md) · [AI agent design](agents.md)
+**Related documents:** [README](README.md) · [Stepwise roadmap](ROADMAP.md) · [Product plan](plan.md) · [AI agent design](AGENTS.md)
 
 ## 1. Architecture goals
 
@@ -62,7 +62,7 @@ Decisions:
 - **Jobs:** Redis plus Arq. Jobs contain identifiers, never full private documents. Long tasks store progress in PostgreSQL.
 - **Database:** PostgreSQL with pgvector. Use native row-level security as defense in depth plus mandatory application-layer workspace predicates.
 - **Objects:** S3-compatible private buckets with workspace-prefixed keys, server-side encryption, short-lived signed URLs, malware scanning, and lifecycle expiration.
-- **AI:** a provider adapter with structured-output validation, timeout/retry policy, model registry, and per-task routing. Domain code never imports a provider SDK directly.
+- **AI:** a provider adapter with structured-output validation, timeout/retry policy, model registry, per-task routing, and Ollama/OpenAI/Claude adapters. Ollama is the personal-mode default. Domain code never imports a provider SDK directly.
 - **Identity:** personal mode uses a server-side bootstrap identity bound to an explicit local/private deployment and never exposed to the public internet. Productization replaces it with an OIDC-compatible managed identity service; the API then verifies issuer, audience, signature, expiry, and membership. LinkedIn connection remains separate from login.
 - **Billing:** no billing code runs in personal mode. Productization adds a Stripe-compatible boundary using checkout/customer-portal links and signed webhooks; entitlements live in Liproser and update idempotently.
 - **Notifications:** provider-neutral email interface; browser/push may be added later. User time zone and quiet hours are authoritative.
@@ -285,7 +285,7 @@ Each handler stores `(consumer_name, event_id)` before committing effects. Retri
 
 ## 9. AI and research runtime
 
-The deterministic orchestrator invokes bounded agents described in [agents.md](agents.md).
+The deterministic orchestrator invokes bounded agents described in [AGENTS.md](AGENTS.md).
 
 ### Provider interface
 
@@ -298,6 +298,8 @@ The deterministic orchestrator invokes bounded agents described in [agents.md](a
 - prompt-prefix caching where supported;
 - provider policy configuration that disables training/retention where contractually available;
 - a circuit breaker and a user-visible degraded mode.
+
+Paid calls reserve estimated cost against a transactionally updated monthly ledger before dispatch. The personal default is USD 10 per calendar month with an 80% warning and hard stop. Actual usage reconciles the reservation after response or failure. Provider/model prices are versioned configuration with effective dates; provider-side spending limits remain an independent safeguard.
 
 Prompts and schemas are immutable versioned artifacts. Store hashes and version IDs, not raw private prompts, in general logs. Approved evaluation fixtures may retain full traces in a separately controlled environment.
 
@@ -318,7 +320,7 @@ Prompts and schemas are immutable versioned artifacts. Store hashes and version 
 - Save the retrieved revision IDs, taxonomy version, embedding version, scores, and filters on the workflow run for reproducibility.
 - After generation, compare against retrieved references and recent posts; excessive overlap blocks readiness rather than encouraging imitation.
 
-## 10. LinkedIn integration boundary
+## 10. LinkedIn integration and import boundary
 
 LinkedIn is an optional adapter with runtime capabilities such as `IDENTITY_LINKED`, `MEMBER_POST_WRITE`, `MEMBER_POST_ANALYTICS`, and `PROFILE_ANALYTICS`. Capabilities come from granted scopes plus a verified probe; UI and workers do not infer them from plan tier.
 
@@ -330,6 +332,8 @@ LinkedIn is an optional adapter with runtime capabilities such as `IDENTITY_LINK
 - LinkedIn API content is tagged by provenance so storage and deletion obligations can be applied selectively.
 
 The manual workflow remains operational regardless of integration status.
+
+Full profile, post-history, and analytics ingestion follow a capability ladder: manual entry first, user-authorized PDF/data/CSV import second, OIDC identity linking third, and official capability-specific API sync only after approval. Login never implies data access. The capability screen must state which profile, posting, post-analytics, or profile-analytics permissions were actually granted. No missing capability may fall back to scraping.
 
 ## 11. Security, privacy, and abuse controls
 
@@ -399,7 +403,7 @@ Environments are `personal`, `local`, `preview`, `staging`, and `production`. Pe
 
 ### AI evaluation gates
 
-The evaluation definitions and agent-specific thresholds live in [agents.md](agents.md). No prompt/model version reaches production unless it passes the frozen regression set, safety thresholds, cost ceiling, and human review.
+The evaluation definitions and agent-specific thresholds live in [AGENTS.md](AGENTS.md). No prompt/model version reaches production unless it passes the frozen regression set, safety thresholds, cost ceiling, and human review.
 
 ### Required acceptance scenarios
 
