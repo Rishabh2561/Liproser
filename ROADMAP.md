@@ -56,6 +56,13 @@ Release gate:
 
 Add voice onboarding, controlled domain/pillar/topic taxonomy, one idea and one primary draft, evidence/claim ledger, LinkedIn-style preview, readability/accessibility/originality checks, and the human review state path:
 
+Deliver as separate slices:
+
+1. `v0.2A` — immutable voice onboarding with domain, audience, pillars, tones, prohibited phrases, three-to-five user-owned samples, and a deterministic taxonomy snapshot.
+2. `v0.2B` — one tagged idea and one primary evidence-aware draft; no alternatives until requested.
+3. `v0.2C` — immutable revisions, preview/checks, and the human review state machine.
+4. `v0.2D` — eligible first-party retrieval with pgvector, recorded retrieval provenance, originality, and diversity checks.
+
 `DRAFT → IN_REVIEW → CHANGES_REQUESTED | REJECTED | APPROVED`
 
 Add pgvector only here, after deterministic metadata filters. Eligible memory is limited to the user's published immutable revisions and still-valid exact approved unpublished revisions. Exclude rejected, deleted, disabled, and superseded-unpublished revisions. Every draft records retrieved revision IDs, taxonomy/embedding versions, and similarity scores. Public sources are evidence, never voice examples.

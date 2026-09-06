@@ -6,18 +6,23 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .budget import BudgetExceededError, reconcile, reserve
 from .config import Settings, get_settings
+from .content_service import audience_tags, canonical_tag
 from .database import (
+    BOOTSTRAP_WORKSPACE_ID,
     AiBudgetPeriod,
     Profile,
     ProfileAnalysis,
     ProfileImport,
     ProfileSuggestion,
     ProviderConfiguration,
+    TaxonomySnapshot,
+    VoiceProfile,
+    VoiceSample,
     get_db,
 )
 from .profile_service import (
@@ -47,10 +52,43 @@ from .schemas import (
     ProviderCheckResponse,
     ProviderSecretRequest,
     SuggestionOutput,
+    TaxonomyOutput,
+    VoiceProfileCreate,
+    VoiceProfileOutput,
+    VoiceSampleOutput,
 )
 from .storage import LocalStorage
 
 router = APIRouter(prefix="/v1")
+
+
+def voice_profile_output(db: Session, profile: VoiceProfile) -> VoiceProfileOutput:
+    samples = db.scalars(
+        select(VoiceSample)
+        .where(VoiceSample.voice_profile_id == profile.id)
+        .order_by(VoiceSample.position)
+    ).all()
+    return VoiceProfileOutput(
+        id=profile.id,
+        version=profile.version,
+        domain=profile.domain,
+        target_audience=profile.target_audience,
+        content_pillars=profile.content_pillars,
+        tone_preferences=profile.tone_preferences,
+        prohibited_phrases=profile.prohibited_phrases,
+        samples_are_user_owned=profile.samples_are_user_owned,
+        taxonomy_version=profile.taxonomy_version,
+        samples=[
+            VoiceSampleOutput(
+                id=sample.id,
+                position=sample.position,
+                text=sample.text,
+                source_type="USER_OWNED",
+            )
+            for sample in samples
+        ],
+        created_at=profile.created_at,
+    )
 
 
 def import_output(item: ProfileImport) -> ImportResponse:
@@ -62,6 +100,96 @@ def import_output(item: ProfileImport) -> ImportResponse:
         confidence=item.confidence,
         source_retained=bool(item.source_path and not item.source_deleted_at),
         source_name=item.source_name,
+    )
+
+
+@router.post("/voice-profiles", response_model=VoiceProfileOutput, status_code=201)
+def create_voice_profile(body: VoiceProfileCreate, db: Session = Depends(get_db)):
+    current_version = db.scalar(
+        select(func.max(VoiceProfile.version)).where(
+            VoiceProfile.workspace_id == BOOTSTRAP_WORKSPACE_ID
+        )
+    )
+    version = int(current_version or 0) + 1
+    taxonomy_version = f"taxonomy@{version}"
+    profile = VoiceProfile(
+        id=str(uuid4()),
+        version=version,
+        domain=body.domain,
+        target_audience=body.target_audience,
+        content_pillars=body.content_pillars,
+        tone_preferences=body.tone_preferences,
+        prohibited_phrases=body.prohibited_phrases,
+        samples_are_user_owned=True,
+        taxonomy_version=taxonomy_version,
+    )
+    db.add(profile)
+    db.flush()
+    for position, text in enumerate(body.samples, start=1):
+        db.add(
+            VoiceSample(
+                id=str(uuid4()),
+                voice_profile_id=profile.id,
+                position=position,
+                text=text,
+                source_type="USER_OWNED",
+            )
+        )
+    db.add(
+        TaxonomySnapshot(
+            id=str(uuid4()),
+            version=taxonomy_version,
+            domain_tag=canonical_tag(body.domain),
+            pillar_tags=[canonical_tag(item) for item in body.content_pillars],
+            audience_tags=audience_tags(body.target_audience),
+            topic_tags=[],
+        )
+    )
+    db.commit()
+    db.refresh(profile)
+    return voice_profile_output(db, profile)
+
+
+@router.get("/voice-profiles/current", response_model=VoiceProfileOutput)
+def current_voice_profile(db: Session = Depends(get_db)):
+    profile = db.scalars(
+        select(VoiceProfile)
+        .where(VoiceProfile.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+        .order_by(VoiceProfile.version.desc())
+        .limit(1)
+    ).first()
+    if not profile:
+        raise HTTPException(404, "Voice profile has not been configured")
+    return voice_profile_output(db, profile)
+
+
+@router.get("/taxonomy/current", response_model=TaxonomyOutput)
+def current_taxonomy(db: Session = Depends(get_db)):
+    profile = db.scalars(
+        select(VoiceProfile)
+        .where(VoiceProfile.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+        .order_by(VoiceProfile.version.desc())
+        .limit(1)
+    ).first()
+    taxonomy = (
+        db.scalars(
+            select(TaxonomySnapshot).where(
+                TaxonomySnapshot.workspace_id == BOOTSTRAP_WORKSPACE_ID,
+                TaxonomySnapshot.version == profile.taxonomy_version,
+            )
+        ).first()
+        if profile
+        else None
+    )
+    if not taxonomy:
+        raise HTTPException(404, "Taxonomy has not been configured")
+    return TaxonomyOutput(
+        version=taxonomy.version,
+        domain_tag=taxonomy.domain_tag,
+        pillar_tags=taxonomy.pillar_tags,
+        audience_tags=taxonomy.audience_tags,
+        topic_tags=taxonomy.topic_tags,
+        created_at=taxonomy.created_at,
     )
 
 

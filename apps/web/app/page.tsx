@@ -18,6 +18,9 @@ type Suggestion = { id: string; section: string; before: string; after: string; 
 type PendingDecision = { suggestionId: string; action: "EDIT_AND_ACCEPT" | "REJECT"; text: string };
 type Setup = { provider:string; model:string; provider_configured:boolean; credential_sources:Record<string,string> };
 type Analysis = { total_score:number; rubric_version:string; suggestions:Suggestion[]; generation_provider:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"; generation_warning?:string|null };
+type VoiceProfile = { id:string; version:number; domain:string; target_audience:string; content_pillars:string[]; tone_preferences:string[]; prohibited_phrases:string[]; taxonomy_version:string; samples:{id:string;text:string}[] };
+
+const splitList = (value: string) => value.split(/[,\n]/).map(item=>item.trim()).filter(Boolean);
 
 export default function Home() {
   const [setup, setSetup] = useState<Setup | null>(null);
@@ -34,6 +37,15 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
   const [message, setMessage] = useState("Ready for a private profile audit.");
+  const [voiceDomain, setVoiceDomain] = useState("");
+  const [voiceAudience, setVoiceAudience] = useState("");
+  const [voicePillars, setVoicePillars] = useState("");
+  const [voiceTones, setVoiceTones] = useState("");
+  const [voiceAvoid, setVoiceAvoid] = useState("");
+  const [voiceSamples, setVoiceSamples] = useState(["", "", ""]);
+  const [voiceOwned, setVoiceOwned] = useState(false);
+  const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
+  const [voiceMessage, setVoiceMessage] = useState("Configure your voice before generating content.");
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
@@ -45,6 +57,19 @@ export default function Home() {
         setModel(data.model);
       }
     }).catch(() => setMessage("Start the API to continue."));
+    fetch(`${API}/v1/voice-profiles/current`).then(async response => {
+      if (!response.ok) return;
+      const data: VoiceProfile = await response.json();
+      setVoiceProfile(data);
+      setVoiceDomain(data.domain);
+      setVoiceAudience(data.target_audience);
+      setVoicePillars(data.content_pillars.join(", "));
+      setVoiceTones(data.tone_preferences.join(", "));
+      setVoiceAvoid(data.prohibited_phrases.join(", "));
+      setVoiceSamples(data.samples.map(sample=>sample.text));
+      setVoiceOwned(true);
+      setVoiceMessage(`Voice profile v${data.version} is ready.`);
+    }).catch(()=>undefined);
   }, []);
 
   function chooseProvider(value: string) {
@@ -141,12 +166,37 @@ export default function Home() {
     setMessage("Re-scored with the same rubric version.");
   }
 
+  async function saveVoiceProfile(event: FormEvent) {
+    event.preventDefault();
+    const samples = voiceSamples.map(value=>value.trim()).filter(Boolean);
+    if (samples.length < 3) return setVoiceMessage("Add at least three substantive samples you own.");
+    if (!voiceOwned) return setVoiceMessage("Confirm that every sample is yours or authorized for this private use.");
+    setVoiceMessage("Saving a new immutable voice-profile version…");
+    const response = await fetch(`${API}/v1/voice-profiles`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        domain:voiceDomain,
+        target_audience:voiceAudience,
+        content_pillars:splitList(voicePillars),
+        tone_preferences:splitList(voiceTones),
+        prohibited_phrases:splitList(voiceAvoid),
+        samples,
+        samples_are_user_owned:voiceOwned,
+      }),
+    });
+    if (!response.ok) return setVoiceMessage("Check the required fields: domain, audience, pillars, tone, and 3–5 distinct samples of at least 20 characters.");
+    const data: VoiceProfile = await response.json();
+    setVoiceProfile(data);
+    setVoiceMessage(`Voice profile v${data.version} saved with ${data.taxonomy_version}.`);
+  }
+
   return <div className="app-shell">
     <aside className="sidebar">
       <a className="brand" href="#top" aria-label="Liproser home"><span>Li</span><strong>Liproser</strong></a>
       <nav aria-label="Primary navigation">
         <a className="nav-item active" href="#profile"><span>01</span>Profile lab</a>
-        <span className="nav-item disabled"><span>02</span>Content studio<small>v0.2</small></span>
+        <a className="nav-item" href="#voice"><span>02</span>Voice setup<small>v0.2</small></a>
         <span className="nav-item disabled"><span>03</span>Calendar<small>v0.3</small></span>
         <span className="nav-item disabled"><span>04</span>Analytics<small>v0.4</small></span>
       </nav>
@@ -225,7 +275,25 @@ export default function Home() {
         <button className="button primary rescore" onClick={rescore}>Re-score accepted changes <span>↗</span></button>
       </section>}
 
-      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · Data stays local</small></footer>
+      <section className="voice-section" id="voice">
+        <div className="voice-heading"><div><p className="eyebrow">CONTENT STUDIO · v0.2A</p><h2>Teach Liproser how you sound.</h2><p>Define your domain, audience, boundaries, and examples before any post is generated. Samples stay private and must be your own or authorized.</p></div>{voiceProfile && <div className="voice-version"><strong>v{voiceProfile.version}</strong><span>{voiceProfile.taxonomy_version}</span></div>}</div>
+        <form onSubmit={saveVoiceProfile} className="voice-form">
+          <div className="voice-grid">
+            <label><span>Domain</span><input aria-label="Voice domain" value={voiceDomain} onChange={event=>setVoiceDomain(event.target.value)} placeholder="Software engineering" required /></label>
+            <label><span>Target audience</span><input aria-label="Target audience" value={voiceAudience} onChange={event=>setVoiceAudience(event.target.value)} placeholder="Backend engineers and engineering leaders" required /></label>
+            <label><span>Content pillars <small>comma separated</small></span><input aria-label="Content pillars" value={voicePillars} onChange={event=>setVoicePillars(event.target.value)} placeholder="API design, career growth, engineering leadership" required /></label>
+            <label><span>Tone preferences <small>comma separated</small></span><input aria-label="Tone preferences" value={voiceTones} onChange={event=>setVoiceTones(event.target.value)} placeholder="Practical, clear, thoughtful" required /></label>
+            <label className="voice-wide"><span>Phrases to avoid <small>optional</small></span><input aria-label="Phrases to avoid" value={voiceAvoid} onChange={event=>setVoiceAvoid(event.target.value)} placeholder="Game changer, unlock your potential" /></label>
+          </div>
+          <div className="sample-heading"><div><strong>Your writing samples</strong><p>Add 3–5 posts you wrote. They establish style only; they are not published or shared.</p></div>{voiceSamples.length < 5 && <button type="button" onClick={()=>setVoiceSamples([...voiceSamples,""])}>+ Add sample</button>}</div>
+          <div className="voice-samples">{voiceSamples.map((sample,index)=><label key={index}><span>Sample {index+1}{voiceSamples.length > 3 && <button type="button" aria-label={`Remove sample ${index+1}`} onClick={()=>setVoiceSamples(voiceSamples.filter((_,position)=>position!==index))}>Remove</button>}</span><textarea aria-label={`Voice sample ${index+1}`} value={sample} onChange={event=>setVoiceSamples(voiceSamples.map((value,position)=>position===index?event.target.value:value))} rows={5} placeholder="Paste a post you wrote (minimum 20 characters)" /></label>)}</div>
+          <label className="ownership-check"><input type="checkbox" checked={voiceOwned} onChange={event=>setVoiceOwned(event.target.checked)} /><span>I confirm these samples are mine or I am authorized to use them privately.</span></label>
+          <div className="voice-actions"><button className="button primary" type="submit">Save voice profile</button><p role="status">{voiceMessage}</p></div>
+          {voiceProfile && <div className="taxonomy-preview"><strong>Controlled taxonomy</strong><span>Domain · {voiceProfile.domain}</span>{voiceProfile.content_pillars.map(pillar=><span key={pillar}>Pillar · {pillar}</span>)}</div>}
+        </form>
+      </section>
+
+      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.2 in progress · Data stays local</small></footer>
     </main>
   </div>;
 }

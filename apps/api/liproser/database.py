@@ -4,7 +4,18 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -104,6 +115,51 @@ class ProfileSuggestion(Base):
     decided_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     decision_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class VoiceProfile(Base):
+    __tablename__ = "voice_profiles"
+    __table_args__ = (UniqueConstraint("workspace_id", "version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    domain: Mapped[str] = mapped_column(String(200))
+    target_audience: Mapped[str] = mapped_column(Text)
+    content_pillars: Mapped[list[str]] = mapped_column(JSON)
+    tone_preferences: Mapped[list[str]] = mapped_column(JSON)
+    prohibited_phrases: Mapped[list[str]] = mapped_column(JSON)
+    samples_are_user_owned: Mapped[bool] = mapped_column(Boolean, default=True)
+    taxonomy_version: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class VoiceSample(Base):
+    __tablename__ = "voice_samples"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    voice_profile_id: Mapped[str] = mapped_column(ForeignKey("voice_profiles.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(24), default="USER_OWNED")
+
+
+class TaxonomySnapshot(Base):
+    __tablename__ = "taxonomy_snapshots"
+    __table_args__ = (UniqueConstraint("workspace_id", "version"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    version: Mapped[str] = mapped_column(String(40))
+    domain_tag: Mapped[str] = mapped_column(String(200))
+    pillar_tags: Mapped[list[str]] = mapped_column(JSON)
+    audience_tags: Mapped[list[str]] = mapped_column(JSON)
+    topic_tags: Mapped[list[str]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AiBudgetPeriod(Base):

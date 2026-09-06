@@ -53,3 +53,14 @@ test("empty profile sections receive guidance without directly accepting placeho
   assert.match(page, /FILL-IN TEMPLATE/);
   assert.match(page, /Fill template & accept/);
 });
+
+test("v0.2 voice onboarding requires owned samples and controlled taxonomy inputs", () => {
+  assert.match(page, /Teach Liproser how you sound/);
+  assert.match(page, /Voice domain/);
+  assert.match(page, /Target audience/);
+  assert.match(page, /Content pillars/);
+  assert.match(page, /Tone preferences/);
+  assert.match(page, /3–5 posts you wrote/);
+  assert.match(page, /samples_are_user_owned/);
+  assert.match(page, /Controlled taxonomy/);
+});

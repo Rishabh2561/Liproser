@@ -30,6 +30,9 @@ def test_v01_application_api_contract(client):
         "/v1/profile-suggestions/{suggestion_id}/decisions",
         "/v1/profiles/{profile_id}/rescore",
         "/v1/usage/ai-budget",
+        "/v1/voice-profiles",
+        "/v1/voice-profiles/current",
+        "/v1/taxonomy/current",
     }
     assert expected <= set(paths)
 
