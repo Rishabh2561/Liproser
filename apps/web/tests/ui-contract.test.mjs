@@ -23,3 +23,11 @@ test("profile lab states the human approval boundary", () => {
   assert.match(page, /You approve every word/);
   assert.match(page, /nothing is applied automatically/);
 });
+
+test("audit targeting and review feedback use persistent inline controls", () => {
+  assert.match(page, /Target role \(optional\)/);
+  assert.match(page, /Domain \(optional\)/);
+  assert.match(page, /Save edited suggestion/);
+  assert.match(page, /Save rejection/);
+  assert.doesNotMatch(page, /window\.prompt/);
+});
