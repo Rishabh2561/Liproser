@@ -11,12 +11,19 @@ test("profile lab exposes manual, PDF, decisions, and re-score actions", () => {
     "Confirm facts & run audit",
     "Edit & accept",
     "Delete retained PDF",
-    "Check & use provider",
+    "Check provider",
     "Reject",
     "Re-score accepted changes",
   ]) {
     assert.match(page, new RegExp(expected.replace("&", "&")));
   }
+});
+
+test("LinkedIn connection is visible without overstating available access", () => {
+  assert.match(page, /Connect LinkedIn/);
+  assert.match(page, /Not available in v0\.1/);
+  assert.match(page, /Identity login alone cannot fetch your full profile, posts, or analytics/);
+  assert.match(page, /never through scraping or browser automation/);
 });
 
 test("profile lab states the human approval boundary", () => {
