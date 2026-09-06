@@ -1,435 +1,220 @@
 # Liproser Technical Architecture
 
-**Status:** implementation baseline
-**Related documents:** [README](README.md) · [Stepwise roadmap](ROADMAP.md) · [Product plan](plan.md) · [AI agent design](AGENTS.md)
+**Status:** decision-complete personal-first baseline
 
-## 1. Architecture goals
+**Related:** [Roadmap](ROADMAP.md) · [Product plan](plan.md) · [Runtime agents](docs/ai-agents.md) · [Repository rules](AGENTS.md)
 
-The architecture must first run as a private, single-user personal operating system without LinkedIn API approval. It must preserve mandatory human approval and explain AI outputs while retaining clean boundaries that can later be hardened for tenant isolation, managed identity, billing, and official publishing without rewriting the core content model.
+## 1. Architectural intent
 
-### Quality attributes
+Use one modular monorepo and one PostgreSQL source of truth. The first release runs privately on the founder's Windows machine with Next.js, FastAPI, base PostgreSQL, and an adapter rooted in an ignored local directory. Infrastructure is introduced by release: pgvector in `v0.2`, Redis/Arq worker in `v0.3`, and S3-compatible managed object storage during SaaS productization.
 
-| Attribute | Initial target |
-|---|---|
-| Availability | 99.5% monthly for web/API; reminders recover after worker outages |
-| API latency | p95 under 500 ms for non-AI reads/writes |
-| AI workflow latency | Profile analysis under 90 s; first draft under 45 s at p95 |
-| Durability | No lost approvals, schedules, feedback, or publication receipts |
-| Isolation | Every customer-owned row/object/vector is scoped by `workspace_id` |
-| Recoverability | RPO ≤ 15 minutes, RTO ≤ 4 hours for production data |
-| Observability | Every request, job, model call, and event shares a trace ID |
-
-## 2. System context
+The `/v1` namespace is the versioned application API between Liproser clients and its backend; it does not imply a public internet API. Personal mode has no application password, trusts the signed-in Windows account through a bootstrap owner/workspace, binds only to loopback, and fails closed when `APP_ENV=production` or any public bind is configured.
 
 ```mermaid
 flowchart LR
-    User[Founder first / professional later] --> Web[Next.js web app]
-    Web --> API[FastAPI API]
-    API --> DB[(PostgreSQL + pgvector)]
-    API --> Obj[(S3-compatible storage)]
-    API --> Redis[(Redis)]
-    Redis --> Worker[Arq workers]
-    Worker --> LLM[Hosted model provider]
-    Worker --> Search[Approved web/search sources]
-    Worker --> Notify[Email/push provider]
-    Worker -. capability gated .-> LI[LinkedIn official APIs]
-    Worker --> DB
-    Worker --> Obj
+    Browser[Next.js on 127.0.0.1] --> API[FastAPI application API]
+    API --> DB[(PostgreSQL)]
+    API --> FS[Private ignored filesystem]
+    API --> AI[Model gateway]
+    AI --> O[Optional Ollama]
+    AI --> H[OpenAI or Claude]
+    API -. v0.2 .-> V[(pgvector)]
+    API -. v0.3 .-> Q[Redis and Arq worker]
+    API -. approved capability .-> LI[Official LinkedIn API]
 ```
 
-No browser extension, crawler, or LinkedIn DOM integration is part of the system.
+No LinkedIn crawler, DOM integration, browser automation, unofficial API, or third-party post ingestion exists.
 
-## 3. Repository and technology decisions
-
-Use a `pnpm` monorepo for consistent tooling while keeping Python packaging independent:
+## 2. Monorepo and modules
 
 ```text
-apps/
-  web/                 Next.js, TypeScript, React, server-rendered dashboard
-  api/                 FastAPI, SQLAlchemy 2, Pydantic 2, Alembic
-  worker/              Arq jobs using the same Python domain packages
-packages/
-  contracts/           OpenAPI-generated TypeScript client and shared enums
-  ui/                  Accessible design-system components
-  config/              Shared lint/format/build configuration
-infra/                 Container and deployment definitions
+apps/web/                 Next.js dashboard and generated API client
+apps/api/                 FastAPI routes, composition, migrations
+packages/domain/          Python entities, value objects, policies, state machines
+packages/application/     Use cases, ports, authorization, outbox
+packages/infrastructure/  PostgreSQL, filesystem, provider and LinkedIn adapters
+workers/                  Added in v0.3 for Arq jobs
+schemas/                  JSON Schema, OpenAPI, event contracts
+evals/                    Synthetic/consented frozen fixtures
+docs/                     ADRs, runtime-agent design, operations
 ```
 
-Decisions:
+Dependency direction is routes/adapters → application → domain. Domain code does not import web frameworks, model SDKs, Redis, filesystem, or LinkedIn clients.
 
-- **Frontend:** Next.js App Router, TypeScript strict mode, TanStack Query for server state, React Hook Form plus schema validation, and an accessible component foundation.
-- **Backend:** FastAPI with async SQLAlchemy and Pydantic; Alembic migrations; OpenAPI is the source for generated client types.
-- **Jobs:** Redis plus Arq. Jobs contain identifiers, never full private documents. Long tasks store progress in PostgreSQL.
-- **Database:** PostgreSQL with pgvector. Use native row-level security as defense in depth plus mandatory application-layer workspace predicates.
-- **Objects:** S3-compatible private buckets with workspace-prefixed keys, server-side encryption, short-lived signed URLs, malware scanning, and lifecycle expiration.
-- **AI:** a provider adapter with structured-output validation, timeout/retry policy, model registry, per-task routing, and Ollama/OpenAI/Claude adapters. Ollama is the personal-mode default. Domain code never imports a provider SDK directly.
-- **Identity:** personal mode uses a server-side bootstrap identity bound to an explicit local/private deployment and never exposed to the public internet. Productization replaces it with an OIDC-compatible managed identity service; the API then verifies issuer, audience, signature, expiry, and membership. LinkedIn connection remains separate from login.
-- **Billing:** no billing code runs in personal mode. Productization adds a Stripe-compatible boundary using checkout/customer-portal links and signed webhooks; entitlements live in Liproser and update idempotently.
-- **Notifications:** provider-neutral email interface; browser/push may be added later. User time zone and quiet hours are authoritative.
+## 3. Release-specific runtime
 
-## 4. Service boundaries
+| Release | Runtime additions | Explicitly absent |
+|---|---|---|
+| Foundation/`v0.1` | Next.js, FastAPI, PostgreSQL, local filesystem adapter, fake/provider adapters | pgvector, Redis, worker, S3, billing, public ingress |
+| `v0.2` | pgvector extension for first-party semantic retrieval | durable scheduling worker |
+| `v0.3` | Redis, Arq worker, transactional outbox dispatcher, dead-letter handling | SaaS billing/public signup |
+| `v0.4` | feature pipeline/model registry tables; manual/CSV analytics | automatic LinkedIn analytics unless approved |
+| `SaaS MVP` | managed identity, S3 adapter, managed DB/queue, public ingress, operations | any unapproved LinkedIn capability |
 
-The initial personal deployment uses a modular monolith plus an independent worker. Modules have explicit repository/service interfaces and must not query another module's tables directly. This is a real product boundary, not a requirement to deploy separate services.
+Containers keep deployment portable, but personal `v0.1` should not require local replicas of future managed services.
 
-| Module | Responsibilities |
+## 4. Identity, tenancy, and authorization
+
+Every row carries `workspace_id`; repositories require it explicitly. Personal setup creates exactly one owner and workspace. Middleware derives the actor from a loopback-only local session tied to the Windows bootstrap identity. Startup validates resolved listen addresses and rejects wildcard/non-loopback hosts, forwarded public-origin configuration, production environment, or missing bootstrap identity when `PERSONAL_MODE=true`.
+
+SaaS mode replaces bootstrap identity with OIDC/JWT validation (issuer, audience, signature, expiry) and memberships. PostgreSQL row-level security becomes defense in depth, not a substitute for application predicates. Cache keys, object paths, events, traces, and model calls include workspace scope. Late asynchronous results re-authorize before persistence.
+
+LinkedIn authorization is a separate encrypted connection and never application login. Tokens use envelope encryption and are excluded from logs/exports by default.
+
+## 5. Storage and retention
+
+The `StoragePort` supports `put`, `open`, `download_url`, `hash`, and `delete`. In personal releases its root is an explicit absolute path such as `data/private/`, validated to remain beneath the configured root and ignored by Git. SaaS swaps the adapter for a private S3-compatible bucket with workspace-prefixed keys, encryption, malware scanning, short-lived signed URLs, and lifecycle controls.
+
+Raw profile PDFs remain until the user explicitly deletes them. Store SHA-256, media type, byte size, original display name, extraction status/confidence, creator, and timestamps. Deleting the source removes bytes and records an auditable deletion receipt while preserving confirmed extracted sections and provenance unless the user requests full profile deletion. Export/download and deletion are visible controls.
+
+User-created relational data remains until explicit deletion or configured account policy. Temporary parser files, caches, and failed-upload quarantines have short documented TTLs. Deletion manifests cover relational rows, vectors, files/objects, caches, queued work, and OAuth tokens.
+
+## 6. Core data model
+
+| Aggregate/table | Key purpose |
 |---|---|
-| Identity & Workspace | Bootstrap owner/workspace in personal mode; later users, membership, consent, and data rights |
-| Profile | Imports, extraction, rubric versions, analyses, proposals, score history |
-| Voice & Library | Voice samples, preference summary, taxonomy, first-party post memory, sources, embeddings, retention |
-| Content | Pillars, calendars, ideas, posts, immutable revisions, claims, similarity |
-| Review | Review actions, edit deltas, feedback, approval validity, audit records |
-| Scheduling & Publishing | Schedules, reminders, capability checks, publish attempts/receipts |
-| Analytics & Prediction | Metric snapshots, baselines, feature snapshots, predictions, calibration |
-| Swipe Intelligence | Raw items, derived patterns, expiry, trend aggregation |
-| AI Orchestration | Workflow runs, model calls, schemas, budgets, prompt/model versions |
-| Billing & Entitlements | Usage measurement in personal mode; plans, quotas, and webhooks after productization |
+| `workspace`, `actor`, `membership` | identity and ownership; one bootstrap membership initially |
+| `consent_record`, `audit_log`, `deletion_manifest` | purpose/version/time evidence and lifecycle actions |
+| `provider_configuration` | provider/model identifier and readiness only; never secret values |
+| `ai_budget_period`, `ai_cost_reservation`, `ai_usage` | UTC month cap, reservations, actual tokens/cost, price version |
+| `profile`, `profile_import`, `profile_source` | confirmed sections, `MANUAL/PDF`, file provenance/hash/state |
+| `rubric`, `profile_analysis`, `profile_suggestion`, `suggestion_decision` | immutable score and rewrite history |
+| `voice_profile`, `voice_preference`, `voice_sample` | versioned, inspectable style constraints from user-owned text |
+| `taxonomy`, `content_idea`, `post`, `post_revision`, `post_tag` | planning, immutable content, controlled tags |
+| `review`, `edit_delta`, `feedback_signal` | human decisions and reversible learning evidence |
+| `source_reference`, `claim_assessment` | evidence ledger and freshness/conflict state |
+| `revision_memory_eligibility`, `embedding` | first-party retrieval state/version, added in `v0.2` |
+| `schedule`, `publish_attempt` | exact approved revision and manual/official delivery state |
+| `metric_snapshot`, `experiment`, `feature_snapshot`, `prediction` | observation-windowed outcomes and calibrated estimates |
+| `outbox_event`, `job_run`, `dead_letter` | durable async execution, added in `v0.3` |
+| `linkedin_connection`, `linkedin_capability`, `sync_receipt` | optional official integration state |
 
-## 5. Core data model
+Foreign keys and unique constraints enforce workspace consistency, immutable revision identity, one active approval per exact revision, idempotency keys, and metric observation windows. Sensitive searchable text is not duplicated in logs.
 
-All mutable tables include `id` (UUIDv7), `workspace_id`, `created_at`, `updated_at`, and optimistic `version`. Personal mode creates one fixed owner workspace during bootstrap so personal records migrate unchanged into SaaS mode. Times are stored in UTC; user-local intent includes an IANA time-zone identifier.
-
-| Entity | Important fields and invariants |
-|---|---|
-| `user` | identity subject, locale, time zone; no provider password storage |
-| `workspace` / `membership` | future tenant boundary; personal bootstrap creates one `OWNER` membership |
-| `consent_record` | purpose, policy version, granted/revoked time, evidence |
-| `profile_import` | method, object key or pasted-content hash, extraction status, expiry |
-| `profile_section` | type, confirmed text, source import, extraction confidence |
-| `rubric_version` | immutable criteria and weights |
-| `profile_analysis` | section scores, total score, rubric/model/prompt versions |
-| `profile_suggestion` | before, after, rationale, preserved facts, proposed claims, decision |
-| `voice_sample` | ownership attestation, source type, text/object reference, active flag |
-| `voice_profile` | immutable version, derived preferences, prohibited patterns, embedding refs |
-| `content_pillar` | name, goal, target allocation, active flag |
-| `calendar` / `content_idea` | cadence window, pillar, intent, format, evidence needs, planned local time |
-| `post` | stable identity and current revision pointer; status state machine |
-| `post_revision` | immutable body/format, author type, voice/prompt/model versions |
-| `domain` | canonical workspace-visible domain identifier, label, description, active flag |
-| `tag` / `post_tag` | versioned taxonomy values and revision-level assignments with source/confidence/confirmation |
-| `content_memory_entry` | eligible approved/published revision, summary/features, embedding ref, freshness, active flag |
-| `claim` | text span, class, assessment, source links, acknowledgement |
-| `review_action` | actor, action, revision, reason, structured feedback, timestamp |
-| `edit_delta` | from/to revision, character patch, semantic summary, magnitude |
-| `schedule` | approved revision, due UTC/local intent, method, state, idempotency key |
-| `publish_attempt` | method, capability snapshot, request hash, response/receipt, failure code |
-| `metric_snapshot` | source, observation time/window, raw counters, normalized metrics |
-| `prediction` | revision, feature snapshot, model version, estimate, interval, explanations |
-| `source_reference` | URL, publisher, published/retrieved times, excerpt hash, freshness |
-| `swipe_item` | raw object/text reference, attribution, ownership attestation, expires at |
-| `swipe_pattern` | derived categorical/numeric features; no reconstructable source text |
-| `workflow_run` | agent/task, schema/prompt/model versions, status, budget, trace, error |
-| `outbox_event` | aggregate/version, event name/payload, delivery status |
-| `audit_event` | actor, action, target, trace, security metadata; append-only |
-| `usage_ledger` | operation, measured tokens/searches/storage, entitlement period |
-| `validation_journal` | task, duration, measured cost, decision/edit magnitude, outcome, usefulness note |
-
-### Data separation and deletion
-
-- Database access starts from authenticated membership and applies `workspace_id`; background jobs re-resolve membership/workspace rather than trusting payload claims.
-- Vector metadata includes `workspace_id`; every similarity query supplies it as a mandatory filter.
-- First-party memory entries reference immutable revisions. Eligibility requires `APPROVED` or `PUBLISHED`, and a revision becomes inactive immediately if approval is invalidated, the post is deleted, or the user disables memory use.
-- Object keys follow `workspaces/{workspace_id}/{classification}/{uuid}` and are never derived from filenames.
-- Account deletion immediately revokes tokens and access, then queues a resumable deletion manifest covering rows, objects, vectors, caches, analytics, and backups according to the published retention schedule.
-- Raw third-party swipe content has `expires_at = ingested_at + 30 days` by default. A daily job deletes it and records completion; derived patterns remain selectively deletable.
-
-## 6. Content state machine
+## 7. Content state machine
 
 ```mermaid
 stateDiagram-v2
     [*] --> DRAFT
-    DRAFT --> IN_REVIEW: open review
-    IN_REVIEW --> CHANGES_REQUESTED: request regeneration
-    IN_REVIEW --> REJECTED: reject
-    IN_REVIEW --> APPROVED: approve exact revision
-    CHANGES_REQUESTED --> DRAFT: new revision ready
-    REJECTED --> DRAFT: explicitly reopen
-    APPROVED --> DRAFT: edit creates revision
-    APPROVED --> SCHEDULED: schedule approved revision
-    APPROVED --> PUBLISH_ACTION_REQUIRED: publish now / manual flow
-    SCHEDULED --> PUBLISH_ACTION_REQUIRED: manual reminder due
-    SCHEDULED --> PUBLISHING: API job due and capability valid
-    PUBLISH_ACTION_REQUIRED --> PUBLISHED: user confirms
-    PUBLISH_ACTION_REQUIRED --> PUBLISHING: user invokes available API publish
-    PUBLISHING --> PUBLISHED: official receipt stored
-    PUBLISHING --> FAILED: terminal attempt failure
-    FAILED --> PUBLISH_ACTION_REQUIRED: manual fallback or retry decision
+    DRAFT --> IN_REVIEW: user submits
+    IN_REVIEW --> CHANGES_REQUESTED: user requests regeneration
+    IN_REVIEW --> REJECTED: user rejects
+    IN_REVIEW --> APPROVED: user approves exact revision
+    CHANGES_REQUESTED --> DRAFT: validated new revision
+    APPROVED --> SCHEDULED: user schedules
+    APPROVED --> PUBLISH_ACTION_REQUIRED: user chooses publish now
+    SCHEDULED --> PUBLISH_ACTION_REQUIRED: reminder due
+    PUBLISH_ACTION_REQUIRED --> PUBLISHING: official adapter only
+    PUBLISH_ACTION_REQUIRED --> PUBLISHED: user confirms manual publish
+    PUBLISHING --> PUBLISHED: confirmed receipt
+    PUBLISHING --> FAILED: terminal/reviewable failure
 ```
 
-Rules:
+Agents and schedulers cannot create `APPROVED`. Editing creates a new immutable revision, invalidates unpublished approval/schedule eligibility, and requires review. Official publishing requires both a valid exact approval and current verified capability. Idempotency prevents duplicate attempts; ambiguity never causes an automatic retry.
 
-- Approval references one immutable `post_revision_id`. Any body, media, link, claim, or format change creates a revision and returns the post to `DRAFT`.
-- Only an authenticated user action can create `APPROVED`. Agents, workers, webhooks, and administrators cannot do so.
-- Scheduling requires an approved revision and an unused client idempotency key.
-- The worker rechecks approval, entitlement, capability, token validity, and revision hash immediately before API publication.
-- Manual confirmation stores the post URL and time when supplied; it is labelled user-confirmed, not API-verified.
-- Ambiguous API timeouts are reconciled using the idempotency key/receipt lookup before retrying.
+## 8. Application API
 
-## 7. Public REST API
+All routes require server-resolved workspace scope, rate limits, request IDs, and idempotency keys on retryable mutations. Errors use a versioned problem-details schema.
 
-Use JSON under `/v1`, cursor pagination, RFC 9457 problem details, UTC RFC 3339 timestamps, and `Idempotency-Key` for mutating operations that can be retried. Every response carries `X-Request-Id`. Long-running commands return `202` with a workflow resource.
+### `v0.1`
 
-| Resource | Principal operations |
+| Route | Contract |
 |---|---|
-| `/profile-imports` | create upload/paste import, complete upload, read extraction/status |
-| `/profiles/{id}/analyses` | start/read analysis and rescore |
-| `/profile-suggestions/{id}/decision` | accept, edit-and-accept, or reject |
-| `/voice-samples`, `/voice-profiles` | manage samples; start/read profile version build |
-| `/sources` | add/approve/disable curated sources and read freshness |
-| `/calendars`, `/content-ideas` | create calendars, edit slots, request ideas |
-| `/posts`, `/posts/{id}/revisions` | create/read posts and immutable revisions |
-| `/domains`, `/tags`, `/posts/{id}/tags` | manage taxonomy, suggest/confirm tags, and filter the private post library |
-| `/content-memory/search` | retrieve eligible first-party references using domain/topic/status/freshness filters |
-| `/posts/{id}/review-actions` | approve, edit-and-approve, regenerate, reject, reopen |
-| `/posts/{id}/claims` | read assessments and acknowledge unresolved claims |
-| `/schedules` | create, reschedule, cancel, and read delivery status |
-| `/publish-attempts` | request manual/API action, confirm manual publish, read result |
-| `/integrations/linkedin` | begin/callback/revoke connection and read capabilities |
-| `/metric-imports`, `/posts/{id}/metrics` | CSV/manual ingestion and metric history |
-| `/posts/{id}/predictions` | request/read versioned prediction and explanation |
-| `/swipe-items`, `/swipe-patterns` | ingest, analyze, expire/delete, and read private patterns |
-| `/workflow-runs/{id}` | status, safe error, cost/latency summary, cancellation where supported |
-| `/exports`, `/account-deletion` | request/read data-rights workflows |
-| `/billing`, `/entitlements`, `/usage` | checkout/portal links and current limits |
+| `GET /v1/setup` | Return configuration/provider readiness without secrets |
+| `POST /v1/setup/provider-check` | Validate selected provider/model and shared output schema |
+| `POST /v1/profile-imports` | Create `MANUAL` or multipart `PDF` import |
+| `GET /v1/profile-imports/{id}` | Return extraction status, confidence, provenance |
+| `POST /v1/profile-imports/{id}/confirm` | Confirm/correct parsed sections |
+| `DELETE /v1/profile-imports/{id}/source` | Delete retained raw source and return receipt |
+| `POST /v1/profiles/{id}/analyses` | Analyze confirmed sections with pinned rubric |
+| `POST /v1/profile-suggestions/{id}/decisions` | `ACCEPT`, `EDIT_AND_ACCEPT`, or `REJECT` |
+| `POST /v1/profiles/{id}/rescore` | Compare against the same rubric version |
+| `GET /v1/usage/ai-budget` | Actual/reserved/remaining USD and UTC reset |
 
-### Shared contract types
+### Future application resources
 
-```ts
-type ReviewAction = "APPROVE" | "EDIT_AND_APPROVE" | "REGENERATE" | "REJECT" | "REOPEN";
+| Release | Resources |
+|---|---|
+| `v0.2` | `/voice-profiles`, `/taxonomy`, `/content-ideas`, `/posts`, `/post-revisions`, `/reviews`, `/sources`, `/claims`, `/memory/revisions` |
+| `v0.3` | `/calendars`, `/schedules`, `/publish-actions`, `/feedback` |
+| `v0.4` | `/metric-snapshots`, `/analytics`, `/predictions` |
+| Capability gated | `/integrations/linkedin`, `/integrations/linkedin/capabilities`, `/integrations/linkedin/syncs` |
+| `SaaS MVP` only | `/billing`, `/entitlements`, `/memberships`, administrative recovery |
 
-type PublishMethod = "COPY_REMINDER" | "LINKEDIN_API";
+## 9. Shared types
 
-interface EditDelta {
-  fromRevisionId: string;
-  toRevisionId: string;
-  patch: string;
-  semanticSummary: string[];
-  magnitude: number; // 0..1, versioned algorithm
-}
+```typescript
+type ReviewAction = "APPROVE" | "EDIT_AND_APPROVE" | "REGENERATE" | "REJECT";
+type PublishMethod = "MANUAL_COPY" | "LINKEDIN_OFFICIAL_API";
+type PredictionBasis = "DOMAIN_PRIOR" | "BLENDED" | "PERSONALIZED";
 
-interface RegenerationFeedback {
-  categories: Array<"HOOK" | "TONE" | "LENGTH" | "CLAIM" | "STRUCTURE" | "CTA" | "OTHER">;
-  instruction?: string;
-  preserveSpans: string[];
-}
-
-interface SourceReference {
-  url: string;
-  publisher?: string;
-  publishedAt?: string;
-  retrievedAt: string;
-  excerptHash: string;
-  freshness: "CURRENT" | "STALE" | "UNKNOWN";
-}
-
-interface ClaimAssessment {
-  claimId: string;
-  classification: "OPINION" | "PERSONAL_EXPERIENCE" | "STABLE_FACT" | "QUANTITATIVE" | "TIME_SENSITIVE";
-  status: "SUPPORTED" | "STALE" | "CONFLICTING" | "UNSUPPORTED" | "USER_CONFIRMED";
-  confidence: number;
-  sources: SourceReference[];
-  explanation: string;
-}
-
-interface PredictionExplanation {
-  bucket: "LOW" | "MEDIUM" | "HIGH";
-  estimate?: number;
-  interval?: [number, number];
-  confidence: number;
-  topFactors: Array<{ feature: string; direction: "UP" | "DOWN"; explanation: string }>;
-  recommendedChange?: string;
-  basis: "DOMAIN_PRIOR" | "BLENDED" | "PERSONALIZED";
-}
-
-interface MetricSnapshot {
-  observedAt: string;
-  windowHours: number;
-  impressions?: number;
-  reactions?: number;
-  comments?: number;
-  reposts?: number;
-  clicks?: number;
-  followers?: number;
-  source: "MANUAL" | "CSV" | "LINKEDIN_API";
-}
-
-interface SwipePattern {
-  hookType: string;
-  structure: string;
-  emotionalTriggers: string[];
-  formatting: string[];
-  ctaStyle?: string;
-  audienceContext?: string;
-  caveats: string[];
-}
+interface EditDelta { fromRevisionId: string; toRevisionId: string; operations: DeltaOp[]; }
+interface RegenerationFeedback { categories: string[]; instruction?: string; preserveSpans: TextSpan[]; }
+interface SourceReference { id: string; url: string; publisher?: string; publishedAt?: string; retrievedAt: string; contentHash: string; }
+interface ClaimAssessment { claimSpan: TextSpan; kind: "CONFIRMED_PERSONAL" | "SUPPORTED" | "OPINION" | "UNSUPPORTED" | "CONFLICTING"; sourceIds: string[]; }
+interface PredictionExplanation { basis: PredictionBasis; bucket: "LOW" | "MEDIUM" | "HIGH"; interval?: [number, number]; factors: Factor[]; recommendedChange?: string; limitations: string[]; }
+interface MetricSnapshot { postRevisionId: string; observedAt: string; windowHours: number; impressions?: number; reactions?: number; comments?: number; reposts?: number; followerDelta?: number; clicks?: number; source: "MANUAL" | "CSV" | "LINKEDIN_OFFICIAL_API"; }
+interface FirstPartyPattern { taxonomyVersion: string; supportingRevisionIds: string[]; feature: string; frequency: number; confidence: number; caveat?: string; }
 ```
 
-Server-side validation remains authoritative. The generated TypeScript client must not duplicate transition or entitlement rules.
+Request/response schemas live in `schemas/`; breaking changes create a new major schema version. Workflows pin schema, prompt, rubric, model, policy, taxonomy, embedding, feature, and price versions at start.
 
-## 8. Durable events and job semantics
+## 10. Model gateway and budget
 
-Business writes and their `outbox_event` are committed in one database transaction. A dispatcher publishes events to Redis; consumers are at-least-once and idempotent.
+`AI_PROVIDER=unconfigured` is the default. First-run setup offers Ollama, OpenAI, and Claude, runs the same structured-output probe, and persists only provider/model selection. Credentials are read from the process environment. Tests use a deterministic fake provider.
 
-| Event | Minimum payload | Consumer examples |
-|---|---|---|
-| `post.approved` | workspace, post, revision, actor, occurred time | scheduling UI, usage metrics |
-| `post.scheduled` | schedule, approved revision, due UTC, method | scheduler |
-| `publish.reminder_due` | schedule, user, reminder policy | notification worker |
-| `post.published` | post, revision, method, receipt, published time | analytics baseline, reporting |
-| `metrics.imported` | post, snapshot IDs, source | normalization, prediction evaluation |
-| `feedback.recorded` | post/revision, action, feedback IDs | feedback synthesizer |
-| `post.memory_eligible` | post, approved/published revision, confirmed tags | summary/embedding indexing |
-| `post.memory_invalidated` | post, revision, reason | immediate retrieval-index removal |
-| `swipe.raw_expired` | item, deletion manifest | compliance reporting |
+- OpenAI: Responses API structured output, `store=false`, explicit output/tool ceilings, usage capture.
+- Claude: Messages API with environment-based authentication and schema validation.
+- Ollama: optional local chat adapter; absence is a readiness state, not startup failure before selection.
 
-Each handler stores `(consumer_name, event_id)` before committing effects. Retries use exponential backoff with jitter and a configured maximum. Exhausted work enters a dead-letter table with a safe replay command; user-visible workflows expose a recoverable status rather than silently failing.
+For OpenAI/Claude, begin a database transaction, lock the active UTC calendar-month budget row, price estimated maximum usage with an effective-dated table, and create a reservation only if unreserved balance covers it. After completion/failure, record actual tokens/cost and release the difference. The 80% warning uses `actual + reserved`; preflight rejects insufficient balance. Price drift and already-reserved in-flight work can produce a small final overshoot. Provider-side limits are independent. Ollama records token/latency with zero external cost. Paid search requires a different budget ledger and remains disabled.
 
-## 9. AI and research runtime
+## 11. Retrieval, evidence, and originality
 
-The deterministic orchestrator invokes bounded agents described in [AGENTS.md](AGENTS.md).
+The retrieval query first enforces workspace, eligibility, domain/topic, and state in SQL, then uses pgvector similarity and diversity selection in `v0.2`. Published revisions remain eligible; approved unpublished revisions require current exact approval; rejected, deleted, disabled, or superseded-unpublished revisions are excluded. Generation records selected revision IDs, taxonomy/embedding versions, and similarity scores.
 
-### Provider interface
+Public research uses an allowlisted search provider and hardened fetcher with SSRF controls, size/time limits, content-type validation, citation metadata, and freshness. It never logs in, fetches LinkedIn, or crawls. Public source text is evidence only. Deterministic lexical/vector similarity compares drafts with eligible own posts and blocks severe reuse before the Critic explains it.
 
-`ModelGateway.generate(task, messages, schema, budget, trace_context)` returns validated structured output, usage, latency, provider/model identifiers, and finish reason. It provides:
+## 12. Events and jobs (`v0.3+`)
 
-- task-based routing (`extract`, `classify`, `draft`, `critique`, `embed`);
-- strict schema validation with one repair attempt;
-- configurable timeouts and retry only for safe transient failures;
-- per-workspace and per-plan budget enforcement;
-- prompt-prefix caching where supported;
-- provider policy configuration that disables training/retention where contractually available;
-- a circuit breaker and a user-visible degraded mode.
+Business writes and `outbox_event` commit together. The dispatcher publishes at least once; consumers are idempotent and record attempts. Retryable failures use bounded exponential backoff and jitter; exhausted/ambiguous publication work enters dead-letter review.
 
-Paid calls reserve estimated cost against a transactionally updated monthly ledger before dispatch. The personal default is USD 10 per calendar month with an 80% warning and hard stop. Actual usage reconciles the reservation after response or failure. Provider/model prices are versioned configuration with effective dates; provider-side spending limits remain an independent safeguard.
+Events include `post.approved`, `post.scheduled`, `publish.reminder_due`, `post.published`, `metrics.imported`, `feedback.recorded`, `voice_profile.versioned`, `data.deletion_requested`, and `linkedin.capability_changed`. Payloads contain IDs/version, not full documents. Schedules store IANA zone plus intended local time and resolved UTC instant; DST ambiguity requires explicit policy.
 
-Prompts and schemas are immutable versioned artifacts. Store hashes and version IDs, not raw private prompts, in general logs. Approved evaluation fixtures may retain full traces in a separately controlled environment.
+## 13. LinkedIn boundary
 
-### Research rules
+OIDC provides limited identity linking and cannot be represented as full-profile import. Automatic sync/publishing starts only after developer approval, user-granted scopes, legal/security review, encrypted-token handling, and a successful capability probe. The UI states exactly which capability is present. Full profile sections stay manual/PDF unless an official capability explicitly supplies them. Revocation immediately disables jobs and follows selective deletion policy. Every unavailable capability falls back to manual/PDF/CSV/copy workflows—never scraping.
 
-- Search only approved public-web providers or fetch user-approved source URLs under egress controls.
-- Block private/link-local IP ranges, unsafe redirects, oversized downloads, and unsupported content types.
-- Treat retrieved content as untrusted data, never instructions.
-- Preserve attribution metadata and hashes; quote minimally.
-- A claim is not supported solely because the Writer or Research Agent says it is.
+## 14. Security, privacy, and observability
 
-### First-party content retrieval
+- Validate upload magic bytes/type/size, reject encrypted or malformed PDFs safely, scan before parsing, and sandbox resource use.
+- Encrypt OAuth tokens and sensitive backups; TLS is mandatory outside loopback; rotate keys with versioned envelopes.
+- Rate-limit by actor/workspace/task; use CSRF protection, secure cookies, CSP, output encoding, and parameterized queries.
+- Redact prompts, profile text, tokens, URLs with sensitive query parameters, and file content from logs. Record IDs, hashes, versions, duration, usage, and outcomes.
+- Audit approvals, schedules, publications, consent, exports, and deletions with actor/time/revision.
+- Metrics include schema repair/failure, latency, budget reservation/reconciliation, claim blocks, approval/edit/reject rates, retrieval eligibility, reminder duplication, prediction calibration, and deletion completion.
+- Alerts cover approval bypass attempts, public personal-mode startup, secret/token errors, cost anomalies, deletion failures, queue age, and duplicate/ambiguous publication.
 
-- Classification suggests one canonical domain and zero or more controlled topic tags. User-confirmed assignments take precedence and all changes are audited.
-- Index only the user's immutable approved/published revisions; never treat rejected drafts or third-party swipe text as positive examples.
-- Retrieval first filters by workspace, eligibility, domain, optional pillar/topic, and freshness, then ranks by semantic similarity and diversity.
-- Return at most the configured small reference set with post/revision IDs, structural features, and concise summaries. Writer context excludes unnecessary full historical bodies.
-- Save the retrieved revision IDs, taxonomy version, embedding version, scores, and filters on the workflow run for reproducibility.
-- After generation, compare against retrieved references and recent posts; excessive overlap blocks readiness rather than encouraging imitation.
+## 15. Testing and acceptance
 
-## 10. LinkedIn integration and import boundary
+Testing layers include domain/state property tests, parser fixtures, provider contract tests, API authorization/idempotency tests, PostgreSQL integration tests, browser journeys, migration tests, and security/adversarial fixtures. Use controlled local source fixtures for citation tests; arbitrary live URL availability is not a release gate.
 
-LinkedIn is an optional adapter with runtime capabilities such as `IDENTITY_LINKED`, `MEMBER_POST_WRITE`, `MEMBER_POST_ANALYTICS`, and `PROFILE_ANALYTICS`. Capabilities come from granted scopes plus a verified probe; UI and workers do not infer them from plan tier.
+Mandatory scenarios:
 
-- OIDC identity data is never represented as a complete profile import.
-- OAuth access/refresh tokens are envelope-encrypted with a managed KMS, never returned to the browser, and redacted from all logs.
-- OAuth callback validates state, PKCE, redirect URI, issuer, and subject binding.
-- Revocation or expiry removes capabilities immediately and defaults pending posts to the manual path with user notice.
-- API version/header selection is configuration with expiry monitoring and contract tests.
-- LinkedIn API content is tagged by provenance so storage and deletion obligations can be applied selectively.
+1. Personal mode rejects production and public/wildcard binding.
+2. Manual and PDF import handle uncertain, encrypted, oversized, malformed, and malicious inputs; source download/deletion is auditable.
+3. Profile output is schema-valid and preserves all protected facts with zero invented critical attributes/numbers in frozen fixtures.
+4. OpenAI, Claude, and Ollama adapters satisfy one schema contract when explicitly integration-tested; fake provider runs in CI.
+5. Concurrent budget reservations, warning, hard rejection, reconciliation, failure, and first-of-month UTC reset pass under a fake clock.
+6. Edit/regenerate/reject/approve transitions preserve exact revision authority; no agent/scheduler bypass exists.
+7. Retrieval excludes ineligible/cross-workspace revisions and records all reference/version metadata.
+8. Duplicate jobs and expired authorization are harmless; ambiguous publish attempts require review.
+9. Metric windows/deduplication and cold-start-to-personalized blending are deterministic and labelled.
+10. Export/deletion cancels pending work, removes all scoped storage classes, and rejects late results.
+11. `.env`, PDFs, exports, analytics, database files, and credentials are ignored and untracked.
 
-The manual workflow remains operational regardless of integration status.
+## 16. Deployment evolution
 
-Full profile, post-history, and analytics ingestion follow a capability ladder: manual entry first, user-authorized PDF/data/CSV import second, OIDC identity linking third, and official capability-specific API sync only after approval. Login never implies data access. The capability screen must state which profile, posting, post-analytics, or profile-analytics permissions were actually granted. No missing capability may fall back to scraping.
+Personal deployment uses loopback containers/processes, PostgreSQL, and the private filesystem adapter with encrypted backups. Preview/staging/production exist only for productization and use a managed frontend, container host, PostgreSQL (with pgvector), Redis, S3-compatible object storage/KMS, managed OIDC, secret manager, and observability. Domain logic remains cloud-neutral.
 
-## 11. Security, privacy, and abuse controls
-
-### Security baseline
-
-- TLS in transit; managed encryption at rest; KMS envelope encryption for integration tokens.
-- Same-site secure cookies at the web edge, CSRF protection, strict CSP, output escaping, upload scanning, and signed URLs.
-- Least-privilege service identities, separate production credentials, secret rotation, dependency/SBOM scanning, and protected migrations.
-- Per-user/workspace/IP rate limits, bounded uploads, decompression limits, and AI/search quotas.
-- Immutable security/audit trail for consent, approvals, publishing, exports, deletion, and administrative access.
-- No private content, tokens, full prompts, or source excerpts in application logs, traces, analytics, or error messages.
-
-### Privacy controls
-
-- Consent is purpose-specific and versioned for profile processing, AI processing, public-web research, integration access, and optional future model improvement.
-- The user can inspect active voice samples/sources, reset learned preferences, export data, revoke integrations, and delete the account.
-- Cross-customer aggregate learning requires separate consent, minimum cohort sizes, de-identification review, and a documented deletion strategy; it is disabled by default.
-- Backups age out under a documented window; deletion receipts distinguish immediate live-data deletion from backup expiry.
-
-### Threats requiring explicit tests
-
-Cross-tenant IDOR, prompt injection in PDFs/web sources, malicious files, SSRF, stored XSS in previews, OAuth token theft, forged billing webhooks, replayed approvals, duplicate publishing, data extraction through embeddings, and worker payload tampering.
-
-## 12. Deployment and operations
-
-### Personal mode
-
-Run the web app, API, worker, PostgreSQL/pgvector, Redis, and S3-compatible local object store through Docker Compose on a private machine or private network. Bind application ports to loopback by default, generate secrets during setup, require encrypted backups, and expose no public signup. A `PERSONAL_MODE=true` configuration is accepted only outside production and only with an explicit bootstrap owner/workspace.
-
-Personal mode still uses migrations, immutable revisions, outbox delivery, workspace scoping, usage measurement, export/deletion, model adapters, and the same API contracts. It omits managed identity, billing, public ingress, LinkedIn OAuth, multi-user administration, and production SLO paging.
-
-### SaaS mode
-
-Build OCI containers for API and worker. The web application may deploy to a managed Next.js platform. A reference managed mapping is:
-
-- managed Next.js frontend/CDN;
-- managed container runtime for API and worker;
-- managed PostgreSQL with pgvector, point-in-time recovery, and read replica option;
-- managed Redis with persistence appropriate to job delivery;
-- S3-compatible object storage and KMS;
-- managed email, secrets, error monitoring, and OpenTelemetry backend.
-
-No domain module may depend on a vendor-specific queue, object, identity, or model SDK outside its adapter.
-
-Environments are `personal`, `local`, `preview`, `staging`, and `production`. Personal-to-SaaS migration exports the owner workspace through the normal export path and imports it through a versioned administrative migration—not ad hoc database copying. Production migrations use expand/migrate/contract steps, backward-compatible API deployment, automated backup verification, and documented rollback. Feature flags gate LinkedIn capabilities, prediction, swipe analysis, billing, and model versions.
-
-## 13. Observability and SLOs
-
-- **Metrics:** request/job latency and failure, queue age, workflow completion, model/search usage and cost, schema-repair rate, notification delivery, outbox lag, dead-letter count, and publication reconciliation.
-- **Traces:** web request → API command → outbox event/job → agent/model/search call, joined by W3C trace context.
-- **Logs:** structured, redacted, sampled, and linked to trace/workflow IDs; workspace IDs are pseudonymized in analytics views.
-- **Product events:** use stable event schemas and exclude post/profile bodies.
-- **Alerts:** approval bypass attempt, cross-tenant authorization denial spike, queue-age breach, deletion-job failure, cost anomaly, LinkedIn API deprecation, token decryption error, and duplicate-publish ambiguity.
-
-## 14. Test strategy and release gates
-
-### Automated layers
-
-- Unit tests for rubrics, transitions, entitlements, normalization, retention, and similarity thresholds.
-- Unit/property tests for taxonomy assignment, tag precedence, memory eligibility/invalidation, tenant filters, diversity ranking, and traceable retrieval.
-- Property/state-machine tests proving all paths to `PUBLISHED` include an approval of the exact revision.
-- Contract tests for OpenAPI clients, model JSON schemas, event versions, billing webhooks, and LinkedIn fixtures.
-- Integration tests with real PostgreSQL/pgvector, Redis, object-store emulator, fake model/search providers, and a fake clock.
-- End-to-end tests for profile import, voice onboarding, calendar, every review action, reminders, manual confirmation, export, and deletion.
-- Security tests for tenant isolation, IDOR, SSRF, prompt injection, XSS, malicious PDFs, token redaction, and replay/idempotency.
-- Load/chaos tests for queue recovery, outbox replay, provider timeout, notification outage, and ambiguous publish responses.
-
-### AI evaluation gates
-
-The evaluation definitions and agent-specific thresholds live in [AGENTS.md](AGENTS.md). No prompt/model version reaches production unless it passes the frozen regression set, safety thresholds, cost ceiling, and human review.
-
-### Required acceptance scenarios
-
-1. Low-confidence PDF extraction pauses for confirmation before analysis.
-2. Accepting a suggestion preserves asserted facts; a new numeric claim is flagged.
-3. Editing an approved revision revokes approval and blocks its schedule/publish attempt.
-4. Duplicate schedule/publish requests result in one action.
-5. An expired LinkedIn token changes capability and offers manual fallback.
-6. Missing/conflicting sources appear in the claim panel and require acknowledgement.
-7. Model/search timeout produces a retryable workflow without partial state mutation.
-8. Swipe raw text expires at 30 days while its deletable derived pattern remains.
-9. Account deletion removes live rows, vectors, objects, tokens, cache entries, and derived patterns.
-10. Cold-start prediction is labelled `DOMAIN_PRIOR`; personalization activates only after the configured data threshold.
-11. Personal mode starts with exactly one bootstrap owner/workspace, refuses public/production configuration, and runs with billing and LinkedIn OAuth disabled.
-12. A personal-workspace export imports into staging SaaS mode without changing post revisions, approvals, source provenance, or metric history.
-13. Approving/publishing a tagged revision makes it retrievable; editing, deleting, or disabling it removes it from future retrieval without affecting audit history.
-14. Rejected drafts and raw swipe items never appear in positive first-party memory results, and every generated draft records which internal references were used.
-
-## 15. Architecture decision records to create during implementation
-
-- ADR-001: modular monolith and Arq rather than microservices/Celery.
-- ADR-002: PostgreSQL/pgvector as relational and vector source of truth.
-- ADR-003: immutable post revisions and approval-bound publishing.
-- ADR-004: provider-neutral hosted AI gateway and model registry.
-- ADR-005: derived-first third-party content retention.
-- ADR-006: manual publishing as permanent fallback, not temporary technical debt.
-- ADR-007: personal-first runtime and gated SaaS productization.
-
-Changes to these decisions require an ADR, updated threat/data-flow review, and synchronized edits to all three planning documents.
+Production changes use expand/migrate/contract migrations, backward-compatible API deployment, verified backups, feature flags, and rollback. External launch gates are legal review, each LinkedIn approval, model-provider data terms, privacy/security review, and deletion/incident-response readiness.

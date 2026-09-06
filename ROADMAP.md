@@ -1,244 +1,110 @@
 # Liproser Stepwise Implementation Roadmap
 
-**Rule:** one vertical slice at a time. A step starts only when the previous step's automated checks and human acceptance gate pass.
+This file is the authoritative implementation sequence. Personal releases are sequential; the LinkedIn integration track is parallel and never blocks them.
 
-**Related documents:** [README](README.md) · [Product plan](plan.md) · [Architecture](architecture.md) · [Agent rules](AGENTS.md)
+**Related:** [README](README.md) · [Product plan](plan.md) · [Architecture](architecture.md) · [Repository rules](AGENTS.md) · [Runtime agents](docs/ai-agents.md)
 
 ## Delivery discipline
 
-For every step:
+For each vertical slice: define the user outcome and non-goals; add deterministic tests/synthetic fixtures; implement the smallest end-to-end behavior; run targeted and repository checks; inspect staged changes for private data, secrets, approval bypasses, and scope creep; commit and push only after checks pass; verify remote CI; then record personal-use evidence privately.
 
-1. Open or update a small issue/spec with the user-visible outcome and explicit non-goals.
-2. Add or update tests/evaluation fixtures before or with the implementation.
-3. Implement the smallest end-to-end path behind a feature flag when incomplete.
-4. Run targeted tests, the full available suite, and `scripts/verify-repository.ps1`.
-5. Review the diff for secrets, private profile content, migrations, approval bypasses, and scope creep.
-6. Commit and push only after checks pass. Never commit `.env`, profile exports, post archives, metrics exports, provider keys, or OAuth tokens.
-7. Record real personal use in the private `validation_journal` once that feature exists.
+## Foundation — specification and runnable shell
 
-## Stage 0 — Foundation
+The documentation reconciliation, environment template, ignored private-data paths, synthetic fixtures, repository verifier, and read-only CI must pass first. Then create the Next.js web shell, FastAPI application API, migration tooling, PostgreSQL, filesystem storage adapter, and one bootstrap owner/workspace.
 
-### 0.1 Repository baseline
-
-**Deliver:** README, roadmap, uppercase `AGENTS.md`, environment template, ignored local environment, synthetic evaluation fixtures, verification script, and read-only CI.
-
-**Acceptance**
-
-- Foundation script passes locally and in GitHub Actions.
-- `.env` and private-data directories are ignored and untracked.
-- Repository has no license by explicit owner choice.
-- Documentation consistently prohibits scraping and autonomous publishing.
-
-### 0.2 Decision records
-
-**Deliver:** ADRs for the modular monolith, PostgreSQL/pgvector, immutable revisions, provider gateway, personal-first runtime, and compliant LinkedIn capability ladder.
-
-**Acceptance**
-
-- Each ADR records context, decision, consequences, and reversal trigger.
-- No ADR requires Redis, object storage, or a managed cloud before the feature that needs it.
-
-## Stage 1 — Runnable personal shell
-
-### 1.1 Monorepo and local runtime
-
-**Deliver:** Next.js web shell, FastAPI health/config API, typed OpenAPI client generation, PostgreSQL migration tooling, and one bootstrap owner/workspace.
-
-**Do not build:** public signup, billing, LinkedIn login, workers, content generation, analytics, or deployment automation.
-
-**Acceptance**
+Acceptance:
 
 - One documented command starts web, API, and PostgreSQL locally.
-- Personal mode binds to loopback and refuses production configuration.
-- Health checks confirm database connectivity and migration version.
-- Unit, API, and smoke tests run in CI.
+- `PERSONAL_MODE=true` binds only to loopback and is rejected with production mode or a public bind.
+- The private storage root is ignored; raw PDFs are downloadable/deletable and retained until explicit deletion.
+- No public signup, billing, worker, Redis, pgvector, or object-storage service is required.
 
-### 1.2 Provider gateway and budget ledger
+## `v0.1` — profile optimizer
 
-**Deliver:** a typed `ModelGateway`, adapters for Ollama/OpenAI/Claude, fake provider for tests, task-based model selection, usage records, and monthly budget enforcement.
+Deliver in order:
 
-**Behavior**
+1. First-run setup and a provider gateway for Ollama, OpenAI, Claude, and a fake CI provider. No provider is active until configured and checked.
+2. Transactional hosted-cost reservation and reconciliation across OpenAI plus Claude: USD 10 per UTC calendar month, warning at 80%, hard pre-dispatch rejection when unreserved balance is insufficient. Ollama records usage at zero external API cost.
+3. Manual and PDF profile imports for Headline, About, Experience, Skills, and Featured. Store source provenance, hash, extraction state/confidence, and retained-file location.
+4. Confirmation/correction of uncertain extraction; safe handling of encrypted, malformed, malicious, and oversized PDFs.
+5. Immutable rubric scoring; Profile Analyst before/after suggestions with preserved/removed/proposed claim classification.
+6. Human accept, edit-and-accept, or reject decisions; re-score with the same rubric version.
 
-- Ollama is default and needs no API key.
-- Selecting OpenAI or Claude without the required key/model fails at startup with a safe configuration error.
-- Every paid request reserves estimated cost transactionally, records actual usage/cost, then releases the difference.
-- At 80% of USD 10, show a warning. At 100%, reject new paid calls before sending them. In-flight calls may cause a small documented overshoot.
-- Provider prices are versioned configuration with effective dates, never hard-coded as timeless constants.
+`v0.1` application API:
 
-**Acceptance**
+| Method and route | Purpose |
+|---|---|
+| `GET /v1/setup` | Provider/configuration readiness without secrets |
+| `POST /v1/setup/provider-check` | Test selected provider/model contract |
+| `POST /v1/profile-imports` | Create `MANUAL` or `PDF` import |
+| `GET /v1/profile-imports/{id}` | Read extraction state and confidence |
+| `POST /v1/profile-imports/{id}/confirm` | Confirm or correct sections |
+| `DELETE /v1/profile-imports/{id}/source` | Explicitly delete retained raw source |
+| `POST /v1/profiles/{id}/analyses` | Score confirmed sections |
+| `POST /v1/profile-suggestions/{id}/decisions` | Accept, edit-and-accept, or reject |
+| `POST /v1/profiles/{id}/rescore` | Compare using the same rubric |
+| `GET /v1/usage/ai-budget` | Actual, reserved, remaining, reset time |
 
-- Contract tests run the same structured-output fixture across fake adapters.
-- Budget race tests prove concurrent requests cannot intentionally exceed the available reservation.
-- Keys and prompt bodies never appear in logs or exceptions.
-- Ollama unavailability has a clear setup/retry message.
+Release gate:
 
-## Stage 2 — First vertical slice: profile optimization
+- Manual and PDF journeys pass end to end, including uncertain extraction and source deletion.
+- Critical frozen fixtures have 100% schema validity and protected-fact preservation, with zero invented employers, dates, credentials, achievements, or numbers.
+- Concurrent reservations, warning, rejection, reconciliation, failure, and UTC reset tests pass.
+- All adapters pass one shared structured-output contract; CI uses the fake provider.
 
-### 2.1 Manual profile entry
+## `v0.2` — content, review, and first-party memory
 
-**Deliver:** forms and APIs for Headline, About, Experience, Skills, Featured, target role/domain, and confirmed facts.
+Add voice onboarding, controlled domain/pillar/topic taxonomy, one idea and one primary draft, evidence/claim ledger, LinkedIn-style preview, readability/accessibility/originality checks, and the human review state path:
 
-**Do not build:** PDF parsing, LinkedIn login, post import, or profile analytics.
+`DRAFT → IN_REVIEW → CHANGES_REQUESTED | REJECTED | APPROVED`
 
-**Acceptance**
+Add pgvector only here, after deterministic metadata filters. Eligible memory is limited to the user's published immutable revisions and still-valid exact approved unpublished revisions. Exclude rejected, deleted, disabled, and superseded-unpublished revisions. Every draft records retrieved revision IDs, taxonomy/embedding versions, and similarity scores. Public sources are evidence, never voice examples.
 
-- Draft/save/confirm works for the bootstrap workspace.
-- Every record is workspace-scoped and exportable.
-- User-entered content is excluded from telemetry and logs.
+Release gate: property tests prove only a human action can approve an exact revision; editing invalidates approval; cross-workspace/ineligible retrieval is zero; every factual claim is classified; first-party similarity and diversity checks pass.
 
-### 2.2 Deterministic rubric
+## `v0.3` — calendar, reminders, and feedback learning
 
-**Deliver:** immutable rubric v1, per-section scoring, explanations, completeness checks, and baseline history without an LLM dependency.
+Add balanced calendar planning, cadence/time zone/quiet days, approved-revision scheduling, copy-formatted-post and reminder flow, explicit user publication confirmation, edit deltas, reason taxonomy, repeated-signal preference learning, and immutable voice-profile versions.
 
-**Acceptance**
+Add Redis, Arq, and a worker only at this release. Use outbox delivery, idempotency keys, retries with dead-letter handling, and timezone-aware scheduling.
 
-- Frozen fixtures always produce the same scores.
-- Missing sections lower completeness without inventing content.
-- Re-scoring against the same rubric is comparable.
+State extension:
 
-### 2.3 Profile Analyst
+`APPROVED → SCHEDULED → PUBLISH_ACTION_REQUIRED → PUBLISHED | FAILED`
 
-**Deliver:** structured suggestions with before/after text, rationale, preserved/removed facts, proposed claims, confidence, and safe fallback.
+Release gate: no approval bypass or duplicate reminder; late/deleted-workspace jobs cannot persist; preferences remain inspectable/reversible.
 
-**Acceptance**
+## `v0.4` — analytics and explainable prediction
 
-- All critical fact-preservation fixtures pass.
-- Numeric achievements not present in confirmed facts are flagged as questions/placeholders.
-- Invalid provider output gets one repair attempt and never persists partially.
+Add manual entry and CSV import for observation-windowed impressions, reactions, comments, reposts, follower growth, and link clicks when available. Capture a pre-product baseline and experiment tags. Begin prediction with versioned structured features and honest domain priors, then blend toward personalized history. Show calibrated interval/bucket, basis, top three factors, and one feasible edit—never a guarantee.
 
-### 2.4 Human decisions and re-score
+Release gate: imports deduplicate; observation windows match; cold-start/personalized states are explicit; controlled fixtures test calibration and explanation fidelity.
 
-**Deliver:** accept, edit-and-accept, reject, immutable suggestion decisions, audit records, and score comparison.
+## `v1` — validated personal operating system
 
-**Acceptance**
+The personal product reaches `v1` only after at least eight weeks of use and 24 planned posts. Evaluate approval-without-edit rate, time to approved post, profile rubric gain, content diversity, budget/cost per approved post, prediction calibration, and engagement lift versus the user's baseline. Record failures and manual workarounds before productization.
 
-- The user can complete the entire first vertical slice without database edits.
-- Accepted wording and user edits remain distinguishable.
-- At least three real founder sessions are recorded before expanding scope.
+## Parallel LinkedIn integration track — capability gated
 
-## Stage 3 — User-authorized profile import
+This work may proceed alongside personal releases but cannot be on their critical path:
 
-### 3.1 PDF and data-export import
+1. Apply for applicable LinkedIn developer products/scopes and complete legal/security review.
+2. Add optional OIDC/PKCE identity linking; show that it supplies limited identity, not full profile ingestion.
+3. Add only capabilities actually approved and granted—for example official publishing or analytics sync—behind verified runtime capability flags.
+4. Full About, Experience, Skills, and Featured remain user supplied unless an official capability explicitly provides them.
 
-**Deliver:** private upload, malware/type/size checks, text extraction, confidence values, source provenance, confirmation UI, expiry, export, and deletion.
+Revocation, encrypted tokens, selective storage/deletion, idempotency, and official fixtures are mandatory. Missing access always falls back to manual/PDF/CSV workflows, never scraping or browser automation.
 
-**Acceptance**
+## `SaaS MVP` — productization after validation
 
-- Low-confidence extraction requires confirmation.
-- A malicious, oversized, encrypted, or malformed file fails safely.
-- Raw imports never enter Git and can be fully deleted.
+First remove founder-specific assumptions and validate with at least five interviews and consented design partners. Then add managed OIDC, assessed tenant isolation, public onboarding, S3-compatible storage, managed services, backups, deletion manifests, rate limits, support/admin recovery, privacy/terms, SLOs, and security review. Billing is a later experiment with Free audit, Creator, and Team/Agency hypotheses; the personal USD 10 AI cap is not subscription pricing.
 
-### 3.2 LinkedIn identity connection
+The SaaS release requires activation, four-week retention, support-load, deletion, security, and unit-economics gates from [plan.md](plan.md).
 
-**Deliver:** OIDC/PKCE account linking and a capability screen showing exactly what data is and is not available.
+## Explicitly excluded
 
-**Important:** identity linking does not claim to import the full profile.
-
-**Acceptance**
-
-- The user completes login on LinkedIn's page; Liproser never handles their password.
-- State, PKCE, redirect, subject binding, revocation, and token encryption tests pass.
-- Missing API capabilities direct the user to PDF/data-export import.
-
-### 3.3 Official profile/post/analytics import — gated
-
-**Start only when:** LinkedIn has approved the required product/scopes and a legal/security review accepts the data flow.
-
-**Deliver:** capability-specific adapters for data actually granted, selective storage tags, sync receipts, token revocation, and user-visible fallback.
-
-**Acceptance**
-
-- Contract tests use official fixtures/sandbox access.
-- No unavailable scope is implied by the UI.
-- Revocation stops sync and deletes or retains data strictly under the selected policy.
-- Failure never activates scraping or DOM automation.
-
-## Stage 4 — Content creation and review
-
-### 4.1 Voice onboarding
-
-**Deliver:** audience, domain, content pillars, tone, prohibited phrases, three-to-five user-owned samples, and voice-profile v1.
-
-**Acceptance:** samples carry ownership/source attestations; derived preferences are inspectable and resettable.
-
-### 4.2 One idea and one draft
-
-**Deliver:** one tagged idea, optional compliant research, one draft, claim ledger, and deterministic readability checks.
-
-**Do not build:** a full calendar, multiple automatic variants, scheduling, or publishing.
-
-**Acceptance:** sources support factual claims; no invented personal experience; cost and latency remain inside configured ceilings.
-
-### 4.3 Review workflow
-
-**Deliver:** immutable revisions and `DRAFT → IN_REVIEW → CHANGES_REQUESTED/REJECTED/APPROVED` transitions.
-
-**Acceptance:** property tests prove only a user action can approve the exact immutable revision; editing invalidates approval.
-
-### 4.4 First-party content memory
-
-**Deliver:** domain/pillar/topic/audience/format/hook tags, tag confirmation, embeddings, eligibility, invalidation, and traceable retrieval.
-
-**Acceptance:** only approved/published own posts are positive references; rejected/third-party/cross-workspace data never appears.
-
-## Stage 5 — Calendar and manual publishing
-
-### 5.1 Calendar
-
-**Deliver:** cadence, time zone, quiet days, content-diversity controls, and one-at-a-time generation from approved ideas.
-
-### 5.2 Scheduling and reminders
-
-**Deliver:** approved-revision schedules, idempotent reminders, copy-formatted-post flow, and explicit user publication confirmation.
-
-### 5.3 Feedback learning
-
-**Deliver:** edit deltas, structured rejection reasons, candidate preferences, repeated-signal thresholds, and voice-profile version history.
-
-**Stage acceptance**
-
-- Founder uses the workflow for at least eight weeks and 24 planned posts.
-- Median idea-to-approved time improves against the recorded baseline.
-- Approval bypasses and duplicate reminders remain zero.
-- Cost per approved post fits the future Creator-tier hypothesis.
-
-## Stage 6 — Analytics and prediction
-
-### 6.1 Manual/CSV metrics first
-
-**Deliver:** validated metrics with observation windows, deduplication, baseline capture, and trend views.
-
-### 6.2 Explainable prediction
-
-**Deliver:** versioned features, domain priors, a simple calibrated model, confidence interval, top three factors, and one recommended edit.
-
-### 6.3 Official analytics sync — gated
-
-Add only when the approved LinkedIn capability exists. Manual import remains permanent fallback.
-
-**Stage acceptance:** insufficient-data states are honest; domain-prior and personalized predictions are labelled; calibration is measured before user-facing precision increases.
-
-## Stage 7 — Productization and SaaS beta
-
-### 7.1 Generalization audit
-
-Remove founder-specific assumptions from prompts, defaults, fixtures, source lists, and UI. Interview at least five target users and onboard design partners without direct database/prompt intervention.
-
-### 7.2 SaaS controls
-
-Add managed identity, tenant isolation assessment, public onboarding, privacy/terms flows, rate limits, support/admin recovery, managed storage/queues, backups, deletion manifests, and operational SLOs.
-
-### 7.3 Billing experiment
-
-Add checkout and entitlements only after value and unit economics are measured. The USD 10 personal AI budget is not a subscription price.
-
-**SaaS beta gate:** activation, four-week retention, security, support load, deletion, and unit-economics targets in `plan.md` pass.
-
-## Deferred until evidence justifies them
-
-- Team/agency roles and multiple managed identities.
-- Automated image/carousel asset generation.
-- Cohort or per-user fine-tuning.
-- Swipe-file expansion beyond deliberate user input.
-- Cross-customer aggregate intelligence.
-- Autonomous engagement or unofficial LinkedIn automation—these remain prohibited, not merely deferred.
+- Third-party post ingestion or competitive-post corpora.
+- LinkedIn scraping, browser/DOM automation, unofficial APIs, and autonomous engagement.
+- Autonomous approval or publishing.
+- Cross-customer training without separate explicit consent.
+- Fine-tuning before `v1` evaluation and governance requirements pass.

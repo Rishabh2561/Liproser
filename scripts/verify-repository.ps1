@@ -9,6 +9,7 @@ try {
         'README.md',
         'ROADMAP.md',
         'AGENTS.md',
+        'docs/ai-agents.md',
         'plan.md',
         'architecture.md',
         '.env.example',
@@ -50,8 +51,9 @@ try {
     if ('AGENTS.md' -cnotin $actualRootNames) {
         $errors.Add('AGENTS.md must use uppercase repository-standard casing.')
     }
-    if ('agents.md' -cin $actualRootNames) {
-        $errors.Add('Lowercase agents.md must not coexist with AGENTS.md.')
+    $obsoleteAgentFiles = @(Get-ChildItem -LiteralPath . -Recurse -File | Where-Object { $_.Name -ceq 'agents.md' })
+    foreach ($obsoleteAgentFile in $obsoleteAgentFiles) {
+        $errors.Add("Obsolete lowercase agent file found: $($obsoleteAgentFile.FullName)")
     }
 
     $markdownFiles = @($trackedFiles | Where-Object { $_ -match '\.md$' })
@@ -78,6 +80,7 @@ try {
     $requiredEnvironmentKeys = @(
         'APP_ENV',
         'PERSONAL_MODE',
+        'APP_BIND_HOST',
         'AI_PROVIDER',
         'AI_MONTHLY_BUDGET_USD',
         'AI_BUDGET_HARD_STOP',
@@ -87,6 +90,8 @@ try {
         'OPENAI_MODEL',
         'ANTHROPIC_API_KEY',
         'ANTHROPIC_MODEL',
+        'DATABASE_URL',
+        'PRIVATE_STORAGE_ROOT',
         'LINKEDIN_INTEGRATION_ENABLED'
     )
     $environmentTemplate = if (Test-Path -LiteralPath '.env.example') {
@@ -102,8 +107,34 @@ try {
     if ($environmentTemplate -notmatch '(?m)^AI_MONTHLY_BUDGET_USD=10\.00$') {
         $errors.Add('Default monthly AI budget must be USD 10.00.')
     }
-    if ($environmentTemplate -notmatch '(?m)^AI_PROVIDER=ollama$') {
-        $errors.Add('Ollama must be the default AI provider.')
+    if ($environmentTemplate -notmatch '(?m)^AI_PROVIDER=unconfigured$') {
+        $errors.Add('No AI provider may be active by default.')
+    }
+
+    $specificationFiles = @('README.md', 'ROADMAP.md', 'plan.md', 'architecture.md', 'AGENTS.md', 'docs/ai-agents.md')
+    foreach ($specificationFile in $specificationFiles) {
+        if (-not (Test-Path -LiteralPath $specificationFile -PathType Leaf)) {
+            continue
+        }
+        $specificationText = Get-Content -LiteralPath $specificationFile -Raw
+        if ($specificationText -match '(?i)\bswipe(?:-file)?\b') {
+            $errors.Add("Obsolete third-party swipe specification in $specificationFile")
+        }
+        if ($specificationText -match '(?<!SaaS )\bMVP\b') {
+            $errors.Add("Ambiguous MVP terminology in $specificationFile; use an explicit release name.")
+        }
+    }
+
+    $roadmapText = if (Test-Path -LiteralPath 'ROADMAP.md') { Get-Content -LiteralPath 'ROADMAP.md' -Raw } else { '' }
+    foreach ($releaseName in @('v0.1', 'v0.2', 'v0.3', 'v0.4', 'v1', 'SaaS MVP')) {
+        if ($roadmapText -notmatch [regex]::Escape($releaseName)) {
+            $errors.Add("ROADMAP.md is missing release name: $releaseName")
+        }
+    }
+
+    $architectureText = if (Test-Path -LiteralPath 'architecture.md') { Get-Content -LiteralPath 'architecture.md' -Raw } else { '' }
+    if ($architectureText -notmatch '### Future application resources') {
+        $errors.Add('architecture.md must explicitly label future application endpoints.')
     }
 
     $credentialPatterns = @(

@@ -26,10 +26,11 @@ See the [stepwise roadmap](ROADMAP.md) for the exact build order and exit criter
 
 Signing in with LinkedIn does **not** automatically provide a complete profile, post history, or analytics. Liproser uses a capability ladder:
 
-1. **Identity link:** LinkedIn OIDC supplies limited identity information.
-2. **User-authorized import:** the user uploads/pastes their LinkedIn PDF, data export, post history, or analytics export.
-3. **Official API:** when the Liproser app has the necessary approval and the user grants the applicable scopes, it imports only the capabilities actually available.
-4. **Fallback:** unavailable data remains user-imported/manual; no scraper or browser automation is introduced.
+1. **User-supplied profile:** the user enters sections manually or uploads a LinkedIn PDF in `v0.1`.
+2. **User-supplied history:** later releases accept deliberate post and analytics CSV/manual imports.
+3. **Identity link:** optional LinkedIn OIDC supplies limited identity information; it is not profile ingestion.
+4. **Official API:** only after Liproser is approved and the user grants specific scopes, capability-specific synchronization becomes available.
+5. **Fallback:** unavailable data remains user-imported/manual; no scraper or browser automation is introduced.
 
 The user signs in on the provider's authorization page. Liproser must never request a LinkedIn password in chat or in its own form. See [LinkedIn OIDC](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2), [API access](https://learn.microsoft.com/en-us/linkedin/marketing/increasing-access), and the [LinkedIn API Terms](https://www.linkedin.com/legal/l/api-terms-of-use).
 
@@ -39,11 +40,11 @@ The model gateway supports three selectable providers:
 
 | Provider | Configuration | Intended use |
 |---|---|---|
-| Ollama (default) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Local/private development with no external API charge |
+| Ollama | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Optional local/private inference with no external API charge |
 | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` | Opt-in hosted structured generation through the Responses API |
 | Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Opt-in hosted generation through the Messages API |
 
-The application-level monthly budget defaults to **USD 10**, warns at 80%, and hard-stops paid-provider calls at the limit. Ollama requests count toward usage telemetry but have zero recorded external API cost; hardware/electricity costs are outside this budget.
+No provider is active by default. First-run setup validates the selected adapter and stores only its provider/model choice; credentials remain in the ignored environment. The application-level OpenAI-plus-Claude budget is **USD 10 per UTC calendar month**. It reserves estimated cost before dispatch, warns at 80%, rejects calls with insufficient unreserved balance, and reconciles actual usage afterward. Concurrent in-flight calls and price drift can still cause a small overshoot, so provider-side limits remain necessary. Ollama usage is measured at zero external API cost.
 
 The local budget is a safety control, not a provider billing guarantee. Configure provider-side limits/alerts independently. OpenAI requests should use `store=false` by default when the adapter supports it; the OpenAI Responses API exposes explicit storage behavior and token/tool ceilings in the [official API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create). Claude reads `ANTHROPIC_API_KEY` through its SDK as documented in the [Claude authentication guide](https://platform.claude.com/docs/en/manage-claude/authentication). Ollama's local chat endpoint is documented in its [official API guide](https://docs.ollama.com/api/chat).
 
@@ -53,7 +54,8 @@ The local budget is a safety control, not a provider billing guarantee. Configur
 |---|---|
 | [plan.md](plan.md) | Product strategy, requirements, metrics, risks, and productization gates |
 | [architecture.md](architecture.md) | System boundaries, data model, APIs, security, deployment, and tests |
-| [AGENTS.md](AGENTS.md) | Repository working rules and bounded AI-agent design |
+| [AGENTS.md](AGENTS.md) | Concise repository working rules |
+| [docs/ai-agents.md](docs/ai-agents.md) | Runtime AI-agent contracts, permissions, fallbacks, and evaluations |
 | [ROADMAP.md](ROADMAP.md) | One-feature-at-a-time implementation sequence and acceptance gates |
 | [evals/](evals/) | Synthetic evaluation fixtures and scoring instructions |
 | [scripts/verify-repository.ps1](scripts/verify-repository.ps1) | Local/CI repository checks |
@@ -71,12 +73,12 @@ Default personal configuration:
 ```dotenv
 APP_ENV=personal
 PERSONAL_MODE=true
-AI_PROVIDER=ollama
+AI_PROVIDER=unconfigured
 AI_MONTHLY_BUDGET_USD=10.00
 AI_BUDGET_HARD_STOP=true
 ```
 
-To use a hosted provider, set `AI_PROVIDER=openai` or `AI_PROVIDER=anthropic`, then add the relevant key and an account-available model to your uncommitted `.env`. Never paste credentials into issues, commits, logs, or prompts.
+First-run setup offers `ollama`, `openai`, or `anthropic`. Add the selected provider's key/model only to your uncommitted `.env`; automated tests use a fake adapter. Never paste credentials into issues, commits, logs, or prompts.
 
 ## Verification
 
@@ -92,9 +94,9 @@ Application-specific setup and tests will be added with the first vertical slice
 
 ## First implementation slice
 
-Build only this path first:
+Build only the `v0.1` path first:
 
-`manual profile entry → section analysis → before/after suggestion → accept/edit/reject → re-score`
+`manual/PDF profile import → confirm extraction → section analysis → before/after suggestion → accept/edit/reject → re-score`
 
 Do not begin calendars, publishing, analytics, or SaaS infrastructure until its exit criteria in [ROADMAP.md](ROADMAP.md) pass.
 

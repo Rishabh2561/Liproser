@@ -1,0 +1,13 @@
+{"id":"platform-001","capability":"personal_mode","input":{"app_env":"personal","personal_mode":true,"bind_host":"127.0.0.1"},"expected":"START","must_assert":["one bootstrap workspace","no public ingress"]}
+{"id":"platform-002","capability":"personal_mode","input":{"app_env":"personal","personal_mode":true,"bind_host":"0.0.0.0"},"expected":"REFUSE_START","must_assert":["public bind rejected"]}
+{"id":"platform-003","capability":"personal_mode","input":{"app_env":"production","personal_mode":true,"bind_host":"127.0.0.1"},"expected":"REFUSE_START","must_assert":["production combination rejected"]}
+{"id":"platform-004","capability":"profile_import","input":{"kind":"PDF","fixture":"valid-linkedin-export.pdf"},"expected":"CONFIRMATION_REQUIRED","must_assert":["hash recorded","source retained","confidence returned"]}
+{"id":"platform-005","capability":"profile_import","input":{"kind":"PDF","fixture":"encrypted.pdf"},"expected":"SAFE_REJECTION","must_assert":["no partial profile","no content in logs"]}
+{"id":"platform-006","capability":"profile_import","input":{"kind":"PDF","fixture":"oversized.pdf"},"expected":"SAFE_REJECTION","must_assert":["size checked before parsing"]}
+{"id":"platform-007","capability":"profile_import","input":{"kind":"PDF","fixture":"malformed.pdf"},"expected":"SAFE_REJECTION","must_assert":["no partial profile","retry guidance"]}
+{"id":"platform-008","capability":"provider_contract","providers":["fake","ollama","openai","anthropic"],"expected":"SHARED_SCHEMA","must_assert":["schema valid or explicit unsupported result","usage captured","no secret logged"]}
+{"id":"platform-009","capability":"budget","input":{"budget_usd":"10.00","actual_usd":"7.90","concurrent_estimates_usd":["1.50","1.50"]},"expected":"ONE_RESERVATION_MAXIMUM","must_assert":["transactional lock","unreserved balance never negative at dispatch"]}
+{"id":"platform-010","capability":"budget","input":{"now":"2027-01-01T00:00:00Z","prior_period_actual_usd":"9.50"},"expected":"NEW_UTC_PERIOD","must_assert":["new balance 10.00","prior ledger retained"]}
+{"id":"platform-011","capability":"first_party_memory","input":{"revision_state":"PUBLISHED","newer_draft_exists":true},"expected":"ELIGIBLE","must_assert":["published immutable revision retained"]}
+{"id":"platform-012","capability":"first_party_memory","input":{"revision_state":"APPROVED_UNPUBLISHED","exact_approval_valid":false},"expected":"INELIGIBLE","must_assert":["superseded unpublished revision excluded"]}
+{"id":"platform-013","capability":"source_deletion","input":{"confirmed_profile_exists":true,"raw_pdf_exists":true},"expected":"RAW_SOURCE_DELETED","must_assert":["deletion receipt retained","confirmed sections retained"]}

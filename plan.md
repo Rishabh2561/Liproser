@@ -1,301 +1,146 @@
 # Liproser Product Plan
 
-**Status:** implementation baseline
+**Status:** reconciled implementation baseline
 
-**Primary audience:** founders, product, design, engineering, ML, security, and legal reviewers
+**Authoritative sequence:** [ROADMAP.md](ROADMAP.md)
 
-**First user:** the founder/operator using Liproser for their own LinkedIn workflow
+**Technical design:** [architecture.md](architecture.md) · **Runtime agents:** [docs/ai-agents.md](docs/ai-agents.md)
 
-**Later customer:** solo professionals with the same validated workflow needs
-**Related documents:** [README](README.md) · [Stepwise roadmap](ROADMAP.md) · [Technical architecture](architecture.md) · [AI agent design](AGENTS.md)
+## Product thesis
 
-## 1. Product thesis
+Liproser begins as the founder's private LinkedIn operating system, not a generalized SaaS. It improves a user-confirmed profile, turns expertise into domain-tagged original posts, preserves human approval, captures outcomes, and learns from the user's own approved/published history. Only workflows proven through at least eight weeks and 24 planned posts are candidates for productization.
 
-Liproser begins as a personal LinkedIn operating system for its founder. It helps turn experience and ideas into a consistent LinkedIn practice through profile optimization, voice-aware content planning, mandatory human review, publishing assistance, and an evidence-driven learning loop. Only workflows proven useful through sustained personal use are generalized into SaaS capabilities.
+Principles:
 
-The product wins by improving a user's own baseline—not by promising virality. It should reduce the effort between an idea and an approved post while preserving the user's judgment, factual responsibility, and distinct voice.
+1. Useful without LinkedIn API approval: manual/PDF/CSV paths are permanent capabilities.
+2. Human authority: generation, scores, and predictions are proposals; approval and publication are explicit user actions.
+3. Truth before engagement: preserve evidence, distinguish facts/opinions, and never invent professional claims.
+4. First-party learning: prior eligible user posts provide voice and pattern memory; public research provides evidence only.
+5. Originality and diversity: detect repetition across hooks, structures, pillars, formats, and prior revisions.
+6. Explainability: profile scores, claims, recommendations, and predictions expose reasons, confidence, and limitations.
+7. Lean sequencing: infrastructure appears only when a release needs it.
 
-### Product principles
+## Initial user and jobs
 
-1. **The user is the publisher.** Nothing is published or scheduled without an explicit approval action.
-2. **Explain every recommendation.** Profile scores, draft critiques, and predictions expose their contributing factors and confidence.
-3. **Prefer evidence over confident prose.** Time-sensitive or quantitative claims carry sources, dates, and review status.
-4. **Learn privately.** Feedback improves the user's voice profile; it is not used for cross-customer training without separate consent.
-5. **Inspire structurally, never imitate.** Swipe-file patterns may guide format and narrative shape, but source language is excluded from generation context.
-6. **Optimize against the user's baseline.** Success means better outcomes and less effort for that user, not vanity comparisons with celebrity accounts.
-7. **Use official interfaces only.** No LinkedIn scraping, DOM automation, or unofficial publishing.
+The initial user is one professional managing one LinkedIn presence. They need to understand what weakens their profile, approve exact evidence-preserving improvements, produce consistent posts in their own voice, review every revision, remember what they have already said, publish manually, and later compare performance with their own baseline.
 
-## 2. Target user and jobs to be done
+The personal release excludes public signup, teams, billing, cross-customer intelligence, third-party post ingestion, scraping, browser automation, and unofficial LinkedIn APIs.
 
-### Stage 1 persona: founder/operator
+## Release outcomes
 
-The first version serves one known user: the product owner. It should optimize that person's real profile, content pillars, source library, writing preferences, schedule, and baseline. This stage is an instrumented product-discovery program, not a disguised multi-tenant launch.
+| Release | User outcome | Key dependency | Exit evidence |
+|---|---|---|---|
+| `v0.1` | Import manual/PDF profile, confirm extraction, score, decide on rewrites, re-score | Next.js, FastAPI, PostgreSQL, private filesystem, configured model | Complete journey; fact/schema/budget gates |
+| `v0.2` | Onboard voice, create/review one tagged draft, reuse eligible own history | pgvector and evidence ledger | Approval integrity; traceable retrieval; originality |
+| `v0.3` | Plan a calendar, schedule reminders, learn from edits | Redis, Arq, worker/outbox | No duplicate reminders; reversible preferences |
+| `v0.4` | Import metrics and receive calibrated prediction explanations | CSV/manual analytics, versioned feature pipeline | Honest cold start; measured calibration |
+| `v1` | Operate the complete personal workflow reliably | Eight weeks and 24 planned posts | Baseline comparison and workflow evidence |
+| `SaaS MVP` | Onboard design partners without founder intervention | Productization/security/operations | Activation, retention, deletion, support, economics |
 
-### Stage 2 persona: solo professional
+## Requirements by capability
 
-A consultant, operator, founder, engineer, or job seeker who has useful expertise but lacks time, confidence, or a repeatable content workflow. They manage one personal LinkedIn presence and approve their own content.
+### Profile optimization (`v0.1`)
 
-### Personal-first productization rule
+- Accept Headline, About, Experience, Skills, and Featured through manual input or PDF.
+- Retain the private raw PDF until explicit deletion; expose source status, provenance, hash, download, and delete controls.
+- Require user confirmation when extraction is uncertain or material.
+- Score with an immutable role/domain rubric covering clarity, hook, search relevance, specificity, evidence, and readability.
+- Show confidence and criterion-level reasons, plus exact before/after suggestions.
+- Mark preserved, removed, and proposed claims. Numeric or biographical additions require user-supplied evidence.
+- Allow accept, edit-and-accept, and reject; preserve audit history and re-score using the same rubric version.
 
-A capability becomes a general SaaS feature only after it is used in the founder workflow, produces a measurable improvement or recurring time saving, survives failure/recovery testing, and can be expressed without hard-coded personal assumptions. Personal preferences remain data/configuration; they must not leak into general prompts, rubrics, defaults, or evaluation fixtures.
+### Content and review (`v0.2`)
 
-### Core jobs
+- Onboard domain, audience, pillars, tone, prohibited phrases, and three-to-five user-owned samples.
+- Generate one idea and one primary draft; alternatives change only a requested dimension.
+- Support text, image concept, carousel outline, and poll metadata; visual assets are not part of this release.
+- Maintain a claim/evidence ledger with freshness dates and source conflict states.
+- Show a LinkedIn-style preview with readability, accessibility, originality, and diversity feedback.
+- Enforce immutable revisions and `DRAFT → IN_REVIEW → CHANGES_REQUESTED/REJECTED/APPROVED`.
+- Tag every revision with canonical domain/pillar/topic/audience/format/hook data; unknown tags require user confirmation.
 
-- Diagnose why a profile is unclear or hard to find and apply evidence-preserving improvements.
-- Turn expertise and timely sources into a balanced content calendar.
-- Draft credible posts that sound like the user rather than a generic content model.
-- Review, revise, schedule, and publish with full control.
-- Learn which topics, formats, and times improve the user's own outcomes.
+### First-party pattern learning (`v0.2+`)
 
-### Explicit non-goals for the MVP
+- Analyze only the user's eligible tagged revisions, never third-party post corpora.
+- Keep published immutable revisions eligible even after newer drafts exist.
+- Keep an approved unpublished revision eligible only while that exact approval remains valid.
+- Exclude rejected, deleted, disabled, and superseded-unpublished revisions.
+- Record reference revision IDs, taxonomy/embedding versions, and similarity scores on every generated draft.
+- Surface structural patterns and repetition risks without encouraging close reuse of prior prose.
 
-- Autonomous publishing or engagement automation.
-- Full LinkedIn profile ingestion through OAuth.
-- Scraping public posts, profiles, feeds, or analytics.
-- Team approvals, agency workspaces, white labeling, or multiple managed identities.
-- Fine-tuning a model per user.
-- Guaranteed impressions, follower growth, or virality.
+### Calendar, reminders, and feedback (`v0.3`)
 
-### Additional non-goals for the personal build
+- Balance cadence across pillars, formats, hooks, narratives, CTAs, time zone, and quiet days.
+- Schedule only the exact approved revision. Editing invalidates approval and schedule eligibility.
+- Use copy-formatted-post and reminder flows; the user confirms publication and may record the URL.
+- Capture edit deltas, regeneration feedback, and rejection reasons as structured signals.
+- Promote durable voice preferences only after repeated evidence or explicit confirmation; make versions inspectable, reversible, and resettable.
 
-- Billing, checkout, pricing enforcement, or subscription entitlements.
-- Public signup, password recovery, team membership, or customer support tooling.
-- Production LinkedIn OAuth/API integration.
-- Premature abstraction for hypothetical agency workflows.
+### Analytics and prediction (`v0.4`)
 
-## 3. Functional requirements
+- Import metrics manually or from CSV with source and observation window; deduplicate snapshots.
+- Compare pillars, formats, times, and trends with the user's pre-product/historical baseline.
+- Capture experiment tags and vary one element by default to support interpretation.
+- Start with domain priors, blend as personal sample size grows, and expose the data basis.
+- Show a calibrated bucket/interval, top three contributing factors, one feasible edit, and limitations.
+- Track calibration and prediction error over time; never promise reach or causality.
 
-### 3.1 Profile Optimizer
+### Official LinkedIn capabilities (parallel track)
 
-**MVP**
+Login cannot promise a full profile, post history, or analytics. `v0.1` uses manual/PDF input. OIDC, if added, is limited identity linking. Automatic publishing or analytics sync is enabled only for approved/granted capabilities behind runtime flags. Full About, Experience, Skills, and Featured remain user-supplied unless an official capability explicitly provides them. Missing access never triggers scraping or browser automation.
 
-- Accept section-by-section manual entry and LinkedIn PDF export upload.
-- Extract Headline, About, Experience, Skills, and Featured content with confidence values; require confirmation when extraction is uncertain.
-- Capture target role, domain, seniority, audience, geography, and desired outcomes before scoring.
-- Score each section against a versioned rubric: clarity, specificity, relevant terminology, hook quality, evidence, readability, and completeness.
-- Present each suggestion as original text, proposed text, explanation, preserved facts, changed claims, confidence, and accept/edit/reject controls.
-- Never invent employers, dates, credentials, metrics, scope, or achievements. New claims are visibly marked for user confirmation.
-- Re-score accepted edits against the same rubric version and retain score history.
+## User experience
 
-**Later**
+Navigation grows with releases: Setup and Profile in `v0.1`; Create, Review, and Library in `v0.2`; Calendar in `v0.3`; Analytics in `v0.4`. Library is one view for eligible own posts, voice samples, and approved evidence. Personal settings expose provider readiness, usage budget, local data controls, and optional LinkedIn capabilities. Billing controls appear only in SaaS mode.
 
-- Compare profile analytics before and after an optimization cycle where approved LinkedIn access exists.
-- Support role-specific rubric packs and controlled rubric experiments.
+Critical journeys:
 
-### 3.2 Domain-aware content engine
+1. Upload PDF → inspect extraction confidence → correct/confirm → analyze → decide section suggestions → re-score → optionally delete source.
+2. Configure voice/taxonomy → approve idea → generate one evidence-aware draft → review/edit/regenerate/reject/approve.
+3. Approve exact revision → schedule → receive idempotent reminder → copy/publish → confirm URL/time.
+4. Import metric snapshot → validate observation window → compare baseline → view prediction basis and calibration.
+5. Export or delete data → pending work is cancelled → late results cannot persist.
 
-**MVP onboarding inputs**
+## AI providers and cost control
 
-- Domain/niche and professional positioning.
-- Target audience and intended reader outcome.
-- Three to five writing samples the user owns or is permitted to provide.
-- Tone controls, prohibited phrases, spelling locale, and preferred post length.
-- Three to six content pillars and optional user-curated sources.
-- Posting cadence, quiet days, time zone, and reminder preferences.
+No provider is active by default. First-run setup checks one selected Ollama, OpenAI, or Claude model against the shared schema and records provider/model selection without secrets. Secrets stay in the ignored environment; CI uses a fake provider. OpenAI uses Responses structured output with `store=false`; Claude uses Messages with environment authentication; Ollama is optional and must pass the same contract.
 
-**MVP generation behavior**
+The personal budget is USD 10 across OpenAI and Claude per UTC calendar month. Before dispatch, a transaction reserves estimated cost; an insufficient unreserved balance rejects the call. Usage reconciles after success/failure, warning begins at 80%, and API responses show actual/reserved/remaining/reset time. In-flight calls and price changes can cause a small overshoot; provider-side caps remain necessary. Ollama records tokens/latency at zero external API cost. Paid search has a separate, initially disabled budget.
 
-- Produce a calendar with a topic, pillar, audience intent, format, evidence needs, and proposed date for each slot.
-- Generate one primary draft per idea; produce hook, tone, or format alternatives only on request.
-- Support text posts, image concepts, carousel outlines, and polls. The MVP generates concepts/outlines, not final image or carousel assets.
-- Balance pillars, formats, hook types, and audience intents; warn about recent repetition.
-- Ground timely or quantitative claims in approved public-web sources. Each claim stores source URL, publisher, publication date, retrieval date, excerpt hash, and review status.
-- Show a LinkedIn-style preview plus readability, accessibility, and originality feedback.
-- Tag every idea and revision with a canonical domain, content pillar, topics, audience intent, format, hook type, and lifecycle status. Users can correct suggested tags before they become reusable metadata.
-- Add approved and published posts to a private first-party content memory so future calendars can retrieve relevant examples, avoid repetition, and build on prior themes. Drafts and rejected posts are excluded from positive-reference retrieval.
+## Success measures and gates
 
-### 3.3 Human approval workflow
+Personal validation measures profile rubric gain, protected-fact failures, approval-without-edit rate, median time from idea to approval, rejection/regeneration reasons, content-diversity drift, monthly cost and cost per approved post, post cadence, prediction calibration, and engagement-rate lift versus the user's own baseline.
 
-- All generated posts enter `DRAFT`; opening review moves a revision to `IN_REVIEW`.
-- The user may approve as-is, edit and approve, request regeneration with structured/free-text feedback, or reject with a reason.
-- Store revision history, character/semantic edit deltas, approval action, rejection taxonomy, and user feedback.
-- Approved content can be scheduled or prepared immediately. In the MVP, both paths use a copy-formatted-post action and a reminder; the user confirms publication and may add the LinkedIn post URL.
-- Once official access is available, expose API publishing only when a capability check passes. Approval is still mandatory.
-- Editing approved content creates a new draft revision and invalidates the previous approval.
+Before `SaaS MVP`:
 
-### 3.4 Predictive performance layer
+- At least eight weeks and 24 planned posts complete in personal use.
+- Zero approval bypasses, cross-workspace retrievals, secret leaks, invented critical profile facts, and duplicate publications.
+- At least five target-user interviews and consented design-partner fixtures cover varied domains and input quality.
+- Design partners activate without direct database or prompt intervention; four-week retention and support burden are measured.
+- Export/deletion, threat model, privacy/security review, model-provider terms, and applicable LinkedIn/legal gates pass.
+- Unit economics support a pricing experiment.
 
-**V2, not MVP**
+Tier hypotheses—not commitments—are Free profile audit, Creator workflow, and later Team/Agency. Pricing follows measured value and cost.
 
-- Begin with an explainable rules-and-gradient-boosting ensemble over hook type, length, format, CTA, topic recency, scheduled time, audience history, and similar-post outcomes.
-- For cold-start users, use clearly labelled domain priors; blend toward user-specific estimates as reliable history accumulates.
-- Return an engagement bucket, calibrated confidence interval, top three factors, and the single editable change most likely to improve the estimate.
-- Save the feature vector and model version used at prediction time.
-- Evaluate calibration and error by sample size; never present predictions as guarantees.
+## Risks and treatments
 
-### 3.5 Post-publish analytics
+| Risk | Treatment |
+|---|---|
+| LinkedIn approval unavailable/changes | Complete manual paths; parallel capability flags; official interfaces only |
+| Fabricated or stale claims | Confirmation, claim ledger, source freshness, blocking checks, frozen fixtures |
+| Repetitive/homogeneous content | First-party similarity, diversity budgets, one bounded alternative |
+| Cold-start prediction | Label domain prior; widen uncertainty; blend only after sufficient history |
+| Founder overfitting | Immutable shared contracts, frozen multi-domain fixtures, design partners before SaaS |
+| Cost overrun | Transactional reservations, reconciliation, warning/hard stop, provider-side caps |
+| Private data in public Git/logs | Ignored roots, staged secret scan, redaction, synthetic fixtures only |
+| Local personal mode exposed publicly | Loopback bind and startup refusal for public/production configuration |
+| Provider lock-in | Typed gateway, shared schemas, versioned pricing, fake contract adapter |
 
-**V2**
+## External launch gates
 
-- Start with manual entry and CSV import for impressions, reactions, comments, reposts, clicks, followers, observation time, and post URL.
-- Add official analytics pulls only for accounts with approved scopes and valid authorization.
-- Show per-post results, rolling trends, pillar/format/time analysis, and performance relative to the user's trailing baseline.
-- Distinguish observation windows so a 24-hour post is not compared directly with a 30-day post.
-- Feed outcomes into reporting and prediction training only after validation and deduplication.
+- Legal review of LinkedIn and content/data flows.
+- LinkedIn developer approval for each automated capability actually shipped.
+- Model-provider data terms and production privacy/security review.
+- SaaS identity, storage, retention, incident response, and deletion validation.
 
-### 3.6 Swipe file and pattern intelligence
-
-**V3**
-
-- Accept text or files deliberately supplied by the user. URL fields are attribution metadata, not instructions to scrape.
-- Extract hook type, structure, emotional trigger, length, formatting, evidence pattern, CTA, audience context, and caveats.
-- Default-delete raw third-party content after 30 days; retain derived features until account deletion or an earlier user request.
-- Keep all raw and derived data private to the workspace. Do not aggregate raw language or expose it to another customer.
-- Create trend reports from the user's derived patterns and compliant public-web research.
-- Block generated text that is too similar to stored swipes or the user's recent posts.
-
-## 4. Added product capabilities
-
-### Evidence ledger
-
-Each draft has a claim panel. Claims are classified as opinion, personal experience, stable fact, quantitative claim, or time-sensitive claim. Non-personal factual claims can be `SUPPORTED`, `STALE`, `CONFLICTING`, `UNSUPPORTED`, or `USER_CONFIRMED`. Publishing is allowed with unresolved claims only after an explicit user acknowledgement recorded in the audit log.
-
-### Distinctiveness and content fatigue
-
-Liproser compares a draft with the user's recent posts and active swipe items using embeddings plus lexical overlap. It reports similarity without exposing third-party source text. Calendar generation enforces configurable diversity across pillars, formats, hooks, narrative structures, and CTAs.
-
-### First-party content memory
-
-Each Liproser-created post is classified using a versioned taxonomy. Required tags are domain, pillar, topics, audience intent, format, hook type, evidence status, and publication lifecycle. The user can edit tags; user-confirmed tags override model suggestions while retaining classification history.
-
-Only approved and published revisions are eligible as positive voice/content references. Rejected revisions contribute structured negative feedback but are never retrieved as examples to imitate. Future generation retrieves a small, diverse set of the user's own relevant posts using metadata filters plus semantic similarity, and receives summaries/structural features rather than unrestricted history. Retrieval must cite the internal post IDs used and run a repetition check on the resulting draft.
-
-### Baselines and experiments
-
-Onboarding captures recent post metrics when available. Each planned post may carry one experiment tag such as `hook_style`, `format`, `posting_time`, or `cta`. Reports treat observations as directional unless sample size and controls justify a stronger conclusion.
-
-### Cost and latency controls
-
-- Reuse versioned prompt prefixes and cached research summaries.
-- Batch embedding work and deduplicate uploads by content hash.
-- Use smaller models for classification/extraction and stronger models for rewriting or final drafting.
-- Set per-plan monthly budgets, per-workflow token ceilings, timeouts, and visible retry behavior.
-- Record cost and latency per workflow without logging private prompt bodies.
-
-## 5. User experience
-
-### Primary navigation
-
-- **Today:** scheduled work, reminders, outstanding reviews, and next recommended action.
-- **Profile:** imported sections, rubric scores, suggestions, and score history.
-- **Calendar:** monthly/weekly ideas and status-aware scheduling.
-- **Review:** Kanban/list queue with revision comparison and claim panel.
-- **Library:** approved sources, voice samples, past posts, and later swipe patterns.
-- **Library:** filterable first-party posts by domain/pillar/topic/status, approved sources, voice samples, and later swipe patterns.
-- **Insights:** baseline, results, experiments, and later predictions.
-- **Settings:** voice controls, data/consent, integrations, billing, export, and deletion.
-
-### Golden personal journey
-
-1. User signs in, accepts data terms, and sets locale/time zone.
-2. User uploads a PDF or pastes profile sections, confirms extraction, and selects a target role.
-3. Liproser scores the profile and offers evidence-preserving diffs.
-4. User supplies voice samples, audience, pillars, cadence, and sources.
-5. Liproser proposes a calendar; user adjusts and generates a draft.
-6. User reviews claims and originality, then edits or approves.
-7. Scheduler sends a reminder; user copies the formatted post to LinkedIn and confirms publication.
-8. User optionally records the post URL and metrics for future insights.
-
-### Personal validation journal
-
-Every real use records the task, time spent, AI cost, accepted/rejected result, material edits, confidence, publication outcome, and a short usefulness note. A weekly review identifies repeated friction, missing capabilities, and features that appeared valuable but were not used. This journal is product evidence and must exclude secrets or unnecessary copied third-party content.
-
-## 6. Metrics and instrumentation
-
-### North-star outcome
-
-**Approved, published posts per active user per month that pass evidence and originality checks.** This joins useful output, quality, and actual follow-through.
-
-### Product metrics
-
-| Area | Metric | Definition |
-|---|---|---|
-| Activation | First-value completion | Profile suggestion accepted or first post approved within 24 hours of onboarding |
-| Generation quality | Approval without material edit | Approved revisions with semantic edit distance below the configured threshold |
-| Workflow | Median time to approval | Time from first draft ready to approved revision, excluding user-configured quiet hours |
-| Follow-through | Scheduled-to-confirmed publish rate | Confirmed manual/API publications divided by due scheduled posts |
-| Retention | Four-week creator retention | User publishes at least once in each of four consecutive weeks |
-| Outcome | Engagement-rate lift | User's normalized engagement rate versus their pre-Liproser/trailing baseline |
-| Trust | Claim issue escape rate | Published posts later marked with an unsupported or incorrect generated claim |
-| Distinctiveness | Similarity block rate | Drafts blocked or revised due to excess source/recent-post similarity |
-| Reuse quality | Memory-assisted approval lift | Approval/edit difference for drafts using first-party memory versus the user's prior baseline |
-| Prediction | Calibration/error | Bucket calibration and MAE/MAPE where statistically meaningful |
-| Efficiency | Cost per approved post | Model, search, embedding, storage, and worker cost divided by approved posts |
-
-Metrics are segmented by cohort, domain, format, tenure, and data completeness. They must never leak one customer's content or small-cohort outcomes.
-
-During the personal stage, report a compact founder scorecard instead: weekly approved/published posts, median minutes from idea to approved draft, approval/edit rate, unsupported-claim count, cost per approved post, schedule adherence, and engagement versus the founder's captured baseline. Cohort segmentation begins only after SaaS launch.
-
-## 7. Productization and monetization hypotheses
-
-Do not implement billing during the personal stage. Before public beta, interview comparable professionals and validate that the personally proven workflow generalizes. Pricing remains an experiment, not a launch promise.
-
-| Tier | Intended value | Candidate limits |
-|---|---|---|
-| Free profile audit | Demonstrate immediate value | One profile import, limited suggestions, no calendar automation |
-| Creator | Full solo workflow | Monthly generation budget, scheduling/reminders, voice learning, evidence checks |
-| Pro creator | Higher cadence and insights | Higher budgets, advanced experiments, analytics, official integrations when eligible |
-| Team/agency (later) | Manage multiple identities | Seats, workspaces, roles, approval policies, consolidated billing |
-
-Test willingness to pay against approved posts, hours saved, and retention. Do not price predictions as guaranteed performance.
-
-## 8. Delivery roadmap and gates
-
-| Phase | Deliverable | Exit gate |
-|---|---|---|
-| 0. Personal foundation | Local/private runtime, data inventory, rubric prototype, model evaluations, no-scraping policy | Own profile/data complete one safe end-to-end dry run |
-| 1. Personal operating system | Profile workflow, voice profile, tagged content memory, calendar, drafts, review, reminders, manual publish confirmation, validation journal | Used for at least 8 weeks and 24 planned posts; tags corrected/confirmed; zero approval bypasses; quality/cost targets met |
-| 2. Productization | Remove personal assumptions, add onboarding, managed identity, tenant isolation verification, privacy controls, support/admin basics | Five design partners complete the golden journey without operator intervention |
-| 3. SaaS beta | Managed deployment, public signup, quotas, billing experiment, operational SLOs | Activation, four-week retention, support load, security, and unit-economics gates met |
-| 4. Official publishing | LinkedIn capability discovery and posting behind feature flags | Developer access, technical sign-off, token security review, failure recovery tested |
-| 5. Prediction and analytics | Manual/CSV metrics, baselines, explainable model, later official pulls | Observation-window integrity and calibration gates met; insufficient-data UX tested |
-| 6. Pattern intelligence | Derived-first swipe analysis and trend reports | Retention deletion verified; similarity leakage tests pass; legal review renewed |
-| 7. Team/agency | Multi-profile workspaces, roles, approval policies | Tenant isolation and delegated authorization independently assessed |
-| 8. Model adaptation | Cohort tuning or preference optimization | Explicit consent, sufficient samples, holdout gains, rollback and deletion strategy |
-
-### Productization gate checklist
-
-- At least eight consecutive weeks of founder use and 24 planned posts, including both accepted and rejected drafts.
-- Median idea-to-approved time is materially lower than the founder's recorded manual baseline.
-- Profile and post workflows show repeat use without direct database or prompt editing.
-- Costs fit the candidate Creator-tier unit economics with headroom for support and infrastructure.
-- Five target-user interviews confirm the same jobs and terminology; no private founder-specific assumptions are treated as defaults.
-- Data export/deletion, tenant isolation, authentication, abuse controls, and support recovery are complete before external accounts are accepted.
-
-## 9. Risks and mitigations
-
-| Risk | Impact | Mitigation / launch gate |
-|---|---|---|
-| LinkedIn permission denial or change | Publishing/analytics unavailable | Manual workflow is complete; feature flags and capability discovery; version monitoring |
-| Scraping or content-rights violation | Account, legal, and reputation harm | No scraping/DOM extension; user-supplied inputs; derived-first retention; counsel review |
-| Hallucinated claim | User reputation harm | Evidence ledger, claim classifier, explicit acknowledgement, traceable prompt/model versions |
-| Generic or homogenized content | Low trust and weak outcomes | Voice conditioning, diversity budgets, similarity checks, alternatives on demand |
-| Cross-tenant leakage | Severe privacy incident | Tenant-scoped queries, object prefixes, authorization tests, encrypted secrets, redacted logs |
-| Weak cold-start prediction | Misleading advice | Domain priors clearly labelled; confidence intervals; minimum-data thresholds |
-| Feedback-loop bias | Narrow, repetitive output | Negative feedback taxonomy, exploration budget, diverse evaluation set, user-reset controls |
-| Stale or self-reinforcing content memory | Repetitive, outdated posts | Lifecycle/freshness filters, diverse retrieval, user tag controls, repetition gate, memory reset |
-| Cost spikes | Poor unit economics | Plan budgets, model routing, caching, batching, quotas, alerts, graceful limits |
-| Reminder fatigue | Churn | User-controlled channels/quiet hours, digest mode, idempotent notifications |
-| Overfitting to the founder | Poor market fit | Personal validation journal, explicit configuration, design-partner tests, productization gate |
-| Premature SaaS infrastructure | Delayed learning | Local/private stage omits billing/public signup while preserving migration-compatible boundaries |
-
-## 10. Compliance assumptions and launch gates
-
-- LinkedIn OIDC supplies limited identity information and is not a full profile-import mechanism: [Sign In with LinkedIn using OIDC](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2).
-- Posting and member analytics are capability-gated; analytics permissions require approved Community Management access: [LinkedIn API access](https://learn.microsoft.com/en-us/linkedin/marketing/increasing-access) and [Posts API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api).
-- Liproser will not scrape or automate LinkedIn pages: [LinkedIn User Agreement](https://www.linkedin.com/legal/user-agreement) and [Prohibited software and extensions](https://www.linkedin.com/help/linkedin/answer/a1341387/prohibited-software-and-extensions).
-- LinkedIn-sourced API data must remain selectively deletable and follow the applicable storage, consent, and deletion terms: [LinkedIn API Terms of Use](https://www.linkedin.com/legal/l/api-terms-of-use).
-- Before production: obtain legal review, model-provider data-term approval, a privacy/security assessment, and any necessary LinkedIn developer approval.
-
-## 11. Acceptance criteria for this plan
-
-- Every original module maps to a delivery phase and architecture subsystem.
-- The personal operating system is useful without public signup, billing, or LinkedIn API approval.
-- SaaS productization has measurable gates rather than a calendar-only handoff.
-- Generated posts are consistently tagged and approved/published revisions can be found and reused through private, traceable first-party retrieval.
-- Every AI output has an owner, version, trace, fallback, and human decision point.
-- Manual publishing delivers complete MVP value without LinkedIn API approval.
-- State transitions cannot bypass approval, including retries and scheduled work.
-- Tenant export and deletion cover relational data, vectors, objects, tokens, cached prompts, and derived swipe patterns.
-- `architecture.md` uses the same statuses, resources, retention rules, and phase boundaries.
-- `AGENTS.md` gives agents no authority over publishing, approval, billing, or tenant access.
+References: [LinkedIn OIDC](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2), [LinkedIn API access](https://learn.microsoft.com/en-us/linkedin/marketing/increasing-access), [LinkedIn API Terms](https://www.linkedin.com/legal/l/api-terms-of-use), and [OpenAI Responses API](https://developers.openai.com/api/reference/cli/resources/responses/methods/create).
