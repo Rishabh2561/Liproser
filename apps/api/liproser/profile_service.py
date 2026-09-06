@@ -16,6 +16,24 @@ SECTION_NAMES = {
     "featured": "featured",
 }
 
+EMPTY_SECTION_TEMPLATES = {
+    "headline": "[Target role] | [Core expertise] | [Outcome you help create]",
+    "about": (
+        "I help [target audience] achieve [outcome] through [skills or approach].\n\n"
+        "My experience includes [verified responsibility or achievement].\n\n"
+        "I am currently focused on [goal, domain, or opportunity]."
+    ),
+    "experience": (
+        "[Role] — [Company or organization]\n"
+        "[Start date]–[End date or Present]\n"
+        "• [What you owned]\n"
+        "• [What you changed and how]\n"
+        "• [Verified result or scale]"
+    ),
+    "skills": "[Primary skill] · [Supporting skill] · [Tool or platform] · [Domain knowledge]",
+    "featured": "[Project, article, or portfolio item] — [What it demonstrates or achieved]",
+}
+
 
 def extract_pdf(content: bytes) -> tuple[ProfileSections, dict[str, float]]:
     if not content.startswith(b"%PDF-"):
@@ -89,11 +107,11 @@ def safe_suggestion(section: str, before: str) -> tuple[str, str, list[str], lis
     text = before.strip()
     if not text:
         return (
-            "[Add confirmed information for this section]",
-            "No confirmed content is available; supply facts before generating a rewrite.",
+            EMPTY_SECTION_TEMPLATES[section],
+            "Fill in this structure with verified details. Bracketed prompts are guidance, not claims.",
             [],
-            ["User confirmation required"],
-            0.25,
+            [],
+            0.4,
         )
     preserved = [line.strip() for line in text.splitlines() if line.strip()][:20]
     if section == "headline":
@@ -146,3 +164,7 @@ def provider_suggestion_is_safe(before: str, after: str, proposed_claims: list[s
     before_markers = factual_markers(before)
     after_markers = factual_markers(after)
     return before_markers <= after_markers and after_markers <= before_markers
+
+
+def contains_template_placeholders(text: str) -> bool:
+    return bool(re.search(r"\[[^\]]+\]", text))

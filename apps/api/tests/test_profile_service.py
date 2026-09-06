@@ -12,9 +12,10 @@ def test_empty_sections_do_not_invent_claims():
     assert score == 0
     assert all(item["score"] == 0 for item in criteria.values())
     after, _, preserved, proposed, confidence = safe_suggestion("experience", "")
-    assert "confirmed" in after.lower()
+    assert "[Role]" in after
+    assert "[Verified result or scale]" in after
     assert preserved == []
-    assert proposed == ["User confirmation required"]
+    assert proposed == []
     assert confidence < 0.5
 
 

@@ -93,6 +93,39 @@ def test_manual_profile_decision_and_rescore(client):
     assert rescored.json()["rubric_version"] == payload["rubric_version"]
 
 
+def test_empty_section_template_requires_verified_details_before_acceptance(client):
+    empty_sections = {key: "" for key in SECTIONS}
+    imported = client.post(
+        "/v1/profile-imports", json={"kind": "MANUAL", "sections": empty_sections}
+    )
+    confirmed = client.post(
+        f"/v1/profile-imports/{imported.json()['id']}/confirm",
+        json={"sections": empty_sections, "target_role": "", "domain": ""},
+    )
+    audit = client.post(f"/v1/profiles/{confirmed.json()['profile_id']}/analyses").json()
+    headline = next(item for item in audit["suggestions"] if item["section"] == "headline")
+    assert "[Target role]" in headline["after"]
+    assert headline["proposed_claims"] == []
+
+    direct = client.post(
+        f"/v1/profile-suggestions/{headline['id']}/decisions", json={"action": "ACCEPT"}
+    )
+    assert direct.status_code == 422
+    unfilled = client.post(
+        f"/v1/profile-suggestions/{headline['id']}/decisions",
+        json={"action": "EDIT_AND_ACCEPT", "edited_text": headline["after"]},
+    )
+    assert unfilled.status_code == 422
+    completed = client.post(
+        f"/v1/profile-suggestions/{headline['id']}/decisions",
+        json={
+            "action": "EDIT_AND_ACCEPT",
+            "edited_text": "Backend Engineer | Python | Reliable APIs",
+        },
+    )
+    assert completed.status_code == 200
+
+
 def test_pdf_validation_and_retained_source_deletion(client):
     invalid = client.post(
         "/v1/profile-imports", files={"file": ("profile.pdf", b"not-pdf", "application/pdf")}

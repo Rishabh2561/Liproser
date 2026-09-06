@@ -46,3 +46,10 @@ test("hosted AI setup uses a masked session-only key and reports generation prov
   assert.match(page, /generation_mode/);
   assert.doesNotMatch(page, /localStorage/);
 });
+
+test("empty profile sections receive guidance without directly accepting placeholders", () => {
+  assert.match(page, /Suggested structure/);
+  assert.match(page, /Replace prompts with facts you can verify/);
+  assert.match(page, /FILL-IN TEMPLATE/);
+  assert.match(page, /Fill template & accept/);
+});

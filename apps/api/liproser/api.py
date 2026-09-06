@@ -21,6 +21,7 @@ from .database import (
     get_db,
 )
 from .profile_service import (
+    contains_template_placeholders,
     extract_pdf,
     provider_suggestion_is_safe,
     safe_suggestion,
@@ -371,7 +372,7 @@ def analyze(
     unsafe_sections: list[str] = []
     for section, before in sections.model_dump().items():
         candidate = generated.get(section)
-        if candidate and provider_suggestion_is_safe(
+        if candidate and before.strip() and provider_suggestion_is_safe(
             before, candidate.after, candidate.proposed_claims
         ):
             after = candidate.after
@@ -380,7 +381,7 @@ def analyze(
             proposed = candidate.proposed_claims
             confidence = candidate.confidence
         else:
-            if candidate:
+            if candidate and before.strip():
                 unsafe_sections.append(section)
             after, rationale, preserved, proposed, confidence = safe_suggestion(section, before)
         db.add(
@@ -416,6 +417,14 @@ def decide(suggestion_id: str, body: DecisionRequest, db: Session = Depends(get_
         raise HTTPException(409, "Suggestion already decided")
     if body.action == "EDIT_AND_ACCEPT" and not body.edited_text:
         raise HTTPException(422, "edited_text is required")
+    if not suggestion.before.strip() and body.action == "ACCEPT":
+        raise HTTPException(422, "Fill the template with verified details before accepting it")
+    if (
+        not suggestion.before.strip()
+        and body.action == "EDIT_AND_ACCEPT"
+        and contains_template_placeholders(body.edited_text or "")
+    ):
+        raise HTTPException(422, "Replace every bracketed prompt with verified details")
     suggestion.decision = body.action
     suggestion.decided_text = (
         body.edited_text

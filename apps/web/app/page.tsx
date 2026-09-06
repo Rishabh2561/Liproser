@@ -5,6 +5,13 @@ import { FormEvent, useEffect, useState } from "react";
 const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 const empty = { headline: "", about: "", experience: "", skills: "", featured: "" };
 const sectionLabels = { headline: "Headline", about: "About", experience: "Experience", skills: "Skills", featured: "Featured" };
+const sectionGuidance = {
+  headline: "[Target role] | [Core expertise] | [Outcome you help create]",
+  about: "Who you help → the outcome → how you work → one verified proof point → your current goal",
+  experience: "Role and company → dates → ownership → actions → verified result or scale",
+  skills: "Primary skill → supporting skill → tools/platforms → domain knowledge",
+  featured: "Project, article, or portfolio item → what it demonstrates or achieved",
+};
 
 type Sections = typeof empty;
 type Suggestion = { id: string; section: string; before: string; after: string; rationale: string; confidence: number; decision?: string };
@@ -191,7 +198,7 @@ export default function Home() {
       <form onSubmit={importManual} className="editor-card" id="manual-editor">
         <div className="editor-heading"><div><p className="eyebrow">MANUAL PROFILE</p><h2>Tell the complete story</h2><p>Paste only what is true today. You can correct extracted PDF text here too.</p></div><span>{filledSections}/5 sections</span></div>
         <div className="editor-grid">
-          {(Object.keys(sections) as (keyof Sections)[]).map(key => <label className={`field field-${key}`} key={key}><span>{sectionLabels[key]} <small>{sections[key].trim() ? "Added" : "Empty"}</small></span><textarea value={sections[key]} onChange={event=>setSections({...sections,[key]:event.target.value})} rows={key === "headline" ? 2 : 5} placeholder={`Paste your ${key} section`} /></label>)}
+          {(Object.keys(sections) as (keyof Sections)[]).map(key => <label className={`field field-${key}`} key={key}><span>{sectionLabels[key]} <small>{sections[key].trim() ? "Added" : "Empty"}</small></span><textarea aria-label={`${sectionLabels[key]} ${sections[key].trim() ? "Added" : "Empty"}`} value={sections[key]} onChange={event=>setSections({...sections,[key]:event.target.value})} rows={key === "headline" ? 2 : 5} placeholder={`Paste your ${key} section`} />{!sections[key].trim() && <div className="empty-guidance"><strong>Suggested structure</strong><span>{sectionGuidance[key]}</span><small>Replace prompts with facts you can verify.</small></div>}</label>)}
         </div>
         <div className="form-actions"><button className="button primary" type="submit">Save manual profile <span>→</span></button><p>Saved only to your private local database.</p></div>
 
@@ -209,10 +216,11 @@ export default function Home() {
       {analysis && <section className="results">
         <div className="results-heading"><div className="score-ring"><strong>{analysis.total_score}</strong><span>/ 100</span></div><div><p className="eyebrow">YOUR AUDIT · {analysis.rubric_version}</p><h2>Specific changes, under your control.</h2><p>Review the evidence and decide what sounds like you.</p><span className={`generation-badge ${analysis.generation_mode}`}>{analysis.generation_mode === "provider" ? `✦ AI rewrites · ${analysis.generation_model}` : "Safe deterministic fallback"}</span>{analysis.generation_warning && <p className="generation-warning">{analysis.generation_warning}</p>}</div></div>
         <div className="suggestions">{analysis.suggestions.map(item=><article key={item.id}>
-          <div className="suggestion-head"><strong>{item.section}</strong><span>{Math.round(item.confidence*100)}% confidence</span></div>
-          <div className="diff"><div><small>BEFORE</small><p>{item.before || "Empty"}</p></div><div className="after"><small>PROPOSED</small><p>{item.after}</p></div></div>
+          <div className="suggestion-head"><strong>{item.section}</strong><span>{item.before.trim() ? `${Math.round(item.confidence*100)}% confidence` : "Fill-in template"}</span></div>
+          <div className="diff"><div><small>BEFORE</small><p>{item.before || "Empty"}</p></div><div className="after"><small>{item.before.trim() ? "PROPOSED" : "FILL-IN TEMPLATE"}</small><p>{item.after}</p></div></div>
           <p className="why"><span>Why</span>{item.rationale}</p>
-          {item.decision ? <span className="decision">✓ {item.decision.replaceAll("_", " ")}</span> : <><div className="actions"><button onClick={()=>decide(item,"ACCEPT")}>Accept</button><button onClick={()=>setPendingDecision({suggestionId:item.id,action:"EDIT_AND_ACCEPT",text:item.after})}>Edit & accept</button><button onClick={()=>setPendingDecision({suggestionId:item.id,action:"REJECT",text:""})}>Reject</button></div>{pendingDecision?.suggestionId === item.id && <div className="decision-editor"><label><span>{pendingDecision.action === "REJECT" ? "Rejection reason" : "Edited suggestion"}</span><textarea aria-label={`${pendingDecision.action === "REJECT" ? "Rejection reason" : "Edited suggestion"} for ${item.section}`} value={pendingDecision.text} onChange={event=>setPendingDecision({...pendingDecision,text:event.target.value})} rows={4}/></label><div className="actions"><button className="button primary" onClick={()=>decide(item,pendingDecision.action,pendingDecision.text)}>{pendingDecision.action === "REJECT" ? "Save rejection" : "Save edited suggestion"}</button><button onClick={()=>setPendingDecision(null)}>Cancel</button></div></div>}</>}
+          {!item.before.trim() && <p className="template-note">Replace every bracketed prompt with verified information before accepting.</p>}
+          {item.decision ? <span className="decision">✓ {item.decision.replaceAll("_", " ")}</span> : <><div className="actions">{item.before.trim() && <button onClick={()=>decide(item,"ACCEPT")}>Accept</button>}<button onClick={()=>setPendingDecision({suggestionId:item.id,action:"EDIT_AND_ACCEPT",text:item.after})}>{item.before.trim() ? "Edit & accept" : "Fill template & accept"}</button><button onClick={()=>setPendingDecision({suggestionId:item.id,action:"REJECT",text:""})}>Reject</button></div>{pendingDecision?.suggestionId === item.id && <div className="decision-editor"><label><span>{pendingDecision.action === "REJECT" ? "Rejection reason" : "Edited suggestion"}</span><textarea aria-label={`${pendingDecision.action === "REJECT" ? "Rejection reason" : "Edited suggestion"} for ${item.section}`} value={pendingDecision.text} onChange={event=>setPendingDecision({...pendingDecision,text:event.target.value})} rows={4}/></label><div className="actions"><button className="button primary" onClick={()=>decide(item,pendingDecision.action,pendingDecision.text)}>{pendingDecision.action === "REJECT" ? "Save rejection" : "Save edited suggestion"}</button><button onClick={()=>setPendingDecision(null)}>Cancel</button></div></div>}</>}
         </article>)}</div>
         <button className="button primary rescore" onClick={rescore}>Re-score accepted changes <span>↗</span></button>
       </section>}
