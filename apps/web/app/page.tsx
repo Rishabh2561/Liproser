@@ -9,33 +9,71 @@ const sectionLabels = { headline: "Headline", about: "About", experience: "Exper
 type Sections = typeof empty;
 type Suggestion = { id: string; section: string; before: string; after: string; rationale: string; confidence: number; decision?: string };
 type PendingDecision = { suggestionId: string; action: "EDIT_AND_ACCEPT" | "REJECT"; text: string };
+type Setup = { provider:string; model:string; provider_configured:boolean; credential_sources:Record<string,string> };
+type Analysis = { total_score:number; rubric_version:string; suggestions:Suggestion[]; generation_provider:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"; generation_warning?:string|null };
 
 export default function Home() {
-  const [setup, setSetup] = useState<{provider:string; provider_configured:boolean} | null>(null);
+  const [setup, setSetup] = useState<Setup | null>(null);
   const [provider, setProvider] = useState("fake");
   const [model, setModel] = useState("fake-v1");
+  const [apiKey, setApiKey] = useState("");
+  const [providerResult, setProviderResult] = useState<{ready:boolean;text:string} | null>(null);
   const [sections, setSections] = useState<Sections>(empty);
   const [importId, setImportId] = useState("");
   const [sourceRetained, setSourceRetained] = useState(false);
   const [profileId, setProfileId] = useState("");
   const [targetRole, setTargetRole] = useState("");
   const [domain, setDomain] = useState("");
-  const [analysis, setAnalysis] = useState<{total_score:number; rubric_version:string; suggestions:Suggestion[]} | null>(null);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [pendingDecision, setPendingDecision] = useState<PendingDecision | null>(null);
   const [message, setMessage] = useState("Ready for a private profile audit.");
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
   useEffect(() => {
-    fetch(`${API}/v1/setup`).then(response => response.json()).then(setSetup).catch(() => setMessage("Start the API to continue."));
+    fetch(`${API}/v1/setup`).then(response => response.json()).then((data: Setup) => {
+      setSetup(data);
+      if (data.provider !== "unconfigured") {
+        setProvider(data.provider);
+        setModel(data.model);
+      }
+    }).catch(() => setMessage("Start the API to continue."));
   }, []);
+
+  function chooseProvider(value: string) {
+    const defaults: Record<string,string> = {fake:"fake-v1",ollama:"gemma3",openai:"gpt-5.6-terra",anthropic:""};
+    setProvider(value);
+    setModel(defaults[value] ?? "");
+    setApiKey("");
+    setProviderResult(null);
+  }
 
   async function checkProvider() {
     setMessage("Checking the provider contract…");
+    setProviderResult({ready:false,text:"Checking credentials, model access, and structured output…"});
+    if ((provider === "openai" || provider === "anthropic") && apiKey.trim()) {
+      const saved = await fetch(`${API}/v1/setup/provider-secret`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider,api_key:apiKey})});
+      setApiKey("");
+      if (!saved.ok) {
+        setProviderResult({ready:false,text:"The session key could not be held by the local API."});
+        return setMessage("Provider key setup failed.");
+      }
+    }
     const response = await fetch(`${API}/v1/setup/provider-check`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({provider,model})});
     const data = await response.json();
+    setModel(data.model ?? model);
+    setProviderResult({ready:Boolean(data.ready),text:data.detail ?? "Provider check failed."});
     setMessage(data.detail ?? "Provider check failed.");
-    if (data.ready) setSetup({provider:data.provider, provider_configured:true});
+    const refreshed = await fetch(`${API}/v1/setup`).then(result=>result.json());
+    setSetup(refreshed);
+  }
+
+  async function clearProviderKey() {
+    const response = await fetch(`${API}/v1/setup/provider-secret/${provider}`, {method:"DELETE"});
+    if (!response.ok) return setProviderResult({ready:false,text:"The session key could not be cleared."});
+    const refreshed = await fetch(`${API}/v1/setup`).then(result=>result.json());
+    setSetup(refreshed);
+    setProviderResult({ready:false,text:"Session key cleared. Environment keys, if present, are unchanged."});
   }
 
   async function importManual(event: FormEvent) {
@@ -110,7 +148,7 @@ export default function Home() {
     </aside>
 
     <main className="workspace" id="top">
-      <div className="topbar"><p>Good profiles are specific, credible, and easy to scan.</p><div className={`api-pill ${setup ? "online" : ""}`}><span />{setup ? `${setup.provider} provider` : "API offline"}</div></div>
+      <div className="topbar"><p>Good profiles are specific, credible, and easy to scan.</p><div className={`api-pill ${setup?.provider_configured ? "online" : ""}`}><span />{setup ? `${setup.provider} provider` : "API offline"}</div></div>
 
       <header className="hero">
         <div className="hero-copy">
@@ -142,10 +180,12 @@ export default function Home() {
       </section>
 
       <section className="provider-panel">
-        <div className="provider-copy"><div className="provider-mark">✦</div><div><p className="eyebrow">AI ENGINE</p><h3>Choose your analysis provider</h3><p>Start with the no-cost fake provider. API keys stay in your ignored local environment.</p></div></div>
-        <label><span>Provider</span><select value={provider} onChange={event=>setProvider(event.target.value)} aria-label="AI provider"><option value="fake">Fake / no cost</option><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Claude</option></select></label>
+        <div className="provider-copy"><div className="provider-mark">✦</div><div><p className="eyebrow">AI ENGINE</p><h3>Choose your analysis provider</h3><p>Use a no-cost local model, an environment key, or a hosted key held only for this API session.</p></div></div>
+        <label><span>Provider</span><select value={provider} onChange={event=>chooseProvider(event.target.value)} aria-label="AI provider"><option value="fake">Fake / no cost</option><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Claude</option></select></label>
         <label><span>Model</span><input value={model} onChange={event=>setModel(event.target.value)} aria-label="Model identifier" placeholder="Model identifier"/></label>
-        <button className="button light" onClick={checkProvider}>Check provider</button>
+        {(provider === "openai" || provider === "anthropic") && <label className="provider-secret"><span>API key · session only</span><input type="password" value={apiKey} onChange={event=>setApiKey(event.target.value)} aria-label={`${provider === "openai" ? "OpenAI" : "Claude"} API key (session only)`} placeholder={setup?.credential_sources?.[provider] === "missing" ? "Paste key for this session" : "Key already configured"} autoComplete="off" spellCheck={false}/></label>}
+        <div className="provider-actions"><button className="button light" onClick={checkProvider}>Save & check provider</button>{setup?.credential_sources?.[provider] === "session" && <button className="clear-key" onClick={clearProviderKey}>Clear session key</button>}</div>
+        {providerResult && <div className={`provider-result ${providerResult.ready ? "success" : "error"}`} role="alert"><span>{providerResult.ready ? "✓" : "i"}</span><p>{providerResult.text}</p></div>}
       </section>
 
       <form onSubmit={importManual} className="editor-card" id="manual-editor">
@@ -167,7 +207,7 @@ export default function Home() {
       <p className="message" role="status"><span />{message}</p>
 
       {analysis && <section className="results">
-        <div className="results-heading"><div className="score-ring"><strong>{analysis.total_score}</strong><span>/ 100</span></div><div><p className="eyebrow">YOUR AUDIT · {analysis.rubric_version}</p><h2>Specific changes, under your control.</h2><p>Review the evidence and decide what sounds like you.</p></div></div>
+        <div className="results-heading"><div className="score-ring"><strong>{analysis.total_score}</strong><span>/ 100</span></div><div><p className="eyebrow">YOUR AUDIT · {analysis.rubric_version}</p><h2>Specific changes, under your control.</h2><p>Review the evidence and decide what sounds like you.</p><span className={`generation-badge ${analysis.generation_mode}`}>{analysis.generation_mode === "provider" ? `✦ AI rewrites · ${analysis.generation_model}` : "Safe deterministic fallback"}</span>{analysis.generation_warning && <p className="generation-warning">{analysis.generation_warning}</p>}</div></div>
         <div className="suggestions">{analysis.suggestions.map(item=><article key={item.id}>
           <div className="suggestion-head"><strong>{item.section}</strong><span>{Math.round(item.confidence*100)}% confidence</span></div>
           <div className="diff"><div><small>BEFORE</small><p>{item.before || "Empty"}</p></div><div className="after"><small>PROPOSED</small><p>{item.after}</p></div></div>

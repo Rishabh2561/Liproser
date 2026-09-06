@@ -12,7 +12,8 @@ These instructions govern changes in this repository. The runtime AI-agent desig
 
 ## Safety and privacy
 
-- Never add LinkedIn scraping, DOM/browser automation, unofficial APIs, credential collection, autonomous approval, or autonomous publishing.
+- Never add LinkedIn scraping, DOM/browser automation, unofficial APIs, LinkedIn credential collection, autonomous approval, or autonomous publishing.
+- Provider API keys may be accepted only by the loopback-bound personal app as masked, session-only secrets held in server memory. Never return, log, persist, export, or commit them; environment configuration remains supported.
 - Models may propose analysis and content. Only deterministic application code may authorize state transitions, schedules, publication, deletion, consent, or billing.
 - Never commit `.env`, credentials, OAuth tokens, raw PDFs, profile exports, post archives, analytics files, databases, backups, or other private user data.
 - Treat uploaded documents and external sources as untrusted input. Preserve confirmed facts; never invent employers, dates, credentials, achievements, or metrics.

@@ -161,7 +161,7 @@ Request/response schemas live in `schemas/`; breaking changes create a new major
 
 ## 10. Model gateway and budget
 
-`AI_PROVIDER=unconfigured` is the default. First-run setup offers Ollama, OpenAI, and Claude, runs the same structured-output probe, and persists only provider/model selection. Credentials are read from the process environment. Tests use a deterministic fake provider.
+`AI_PROVIDER=unconfigured` is the default. First-run setup offers Ollama, OpenAI, and Claude, runs the same structured-output probe, and persists only provider/model selection. Credentials are read from the process environment or accepted by a personal-mode loopback endpoint into a process-memory session store. Session keys use masked inputs, are never returned or persisted, can be explicitly cleared, and disappear on restart. Tests use a deterministic fake provider and synthetic session keys.
 
 - OpenAI: Responses API structured output, `store=false`, explicit output/tool ceilings, usage capture.
 - Claude: Messages API with environment-based authentication and schema validation.

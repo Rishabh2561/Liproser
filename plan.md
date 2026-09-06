@@ -103,7 +103,7 @@ Critical journeys:
 
 ## AI providers and cost control
 
-No provider is active by default. First-run setup checks one selected Ollama, OpenAI, or Claude model against the shared schema and records provider/model selection without secrets. Secrets stay in the ignored environment; CI uses a fake provider. OpenAI uses Responses structured output with `store=false`; Claude uses Messages with environment authentication; Ollama is optional and must pass the same contract.
+No provider is active by default. First-run setup checks one selected Ollama, OpenAI, or Claude model against the shared schema and records provider/model selection without secrets. Hosted keys may come from the ignored environment or a masked personal-mode input that is held only in server memory and cleared on restart; CI uses a fake provider. OpenAI uses Responses structured output with `store=false`; Claude uses Messages authentication; Ollama is optional and must pass the same contract.
 
 The personal budget is USD 10 across OpenAI and Claude per UTC calendar month. Before dispatch, a transaction reserves estimated cost; an insufficient unreserved balance rejects the call. Usage reconciles after success/failure, warning begins at 80%, and API responses show actual/reserved/remaining/reset time. In-flight calls and price changes can cause a small overshoot; provider-side caps remain necessary. Ollama records tokens/latency at zero external API cost. Paid search has a separate, initially disabled budget.
 

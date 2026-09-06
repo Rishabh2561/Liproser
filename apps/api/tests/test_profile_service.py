@@ -1,4 +1,8 @@
-from liproser.profile_service import safe_suggestion, score_sections
+from liproser.profile_service import (
+    provider_suggestion_is_safe,
+    safe_suggestion,
+    score_sections,
+)
 from liproser.schemas import ProfileSections
 
 
@@ -21,3 +25,17 @@ def test_headline_rewrite_preserves_every_term():
         assert term in after
     assert preserved == [before]
     assert proposed == []
+
+
+def test_provider_guard_rejects_new_or_removed_protected_facts():
+    before = "Implemented an API at ExampleCo in 2024 using FastAPI."
+    assert provider_suggestion_is_safe(
+        before, "At ExampleCo in 2024, implemented an API using FastAPI.", []
+    )
+    assert not provider_suggestion_is_safe(
+        before, "At MegaCorp in 2024, implemented an API using FastAPI.", []
+    )
+    assert not provider_suggestion_is_safe(
+        before, "At ExampleCo, implemented an API using FastAPI.", []
+    )
+    assert not provider_suggestion_is_safe(before, before, ["Unverified achievement"])

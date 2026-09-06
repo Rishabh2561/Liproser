@@ -44,7 +44,7 @@ The model gateway supports three selectable providers:
 | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` | Opt-in hosted structured generation through the Responses API |
 | Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Opt-in hosted generation through the Messages API |
 
-No provider is active by default. First-run setup validates the selected adapter and stores only its provider/model choice; credentials remain in the ignored environment. The application-level OpenAI-plus-Claude budget is **USD 10 per UTC calendar month**. It reserves estimated cost before dispatch, warns at 80%, rejects calls with insufficient unreserved balance, and reconciles actual usage afterward. Concurrent in-flight calls and price drift can still cause a small overshoot, so provider-side limits remain necessary. Ollama usage is measured at zero external API cost.
+No provider is active by default. First-run setup validates the selected adapter and stores only its provider/model choice. Hosted credentials can remain in the ignored environment or be entered in the localhost UI as masked, session-only values held in server memory. Session keys are never returned or persisted and disappear when the API restarts. The application-level OpenAI-plus-Claude budget is **USD 10 per UTC calendar month**. It reserves estimated cost before dispatch, warns at 80%, rejects calls with insufficient unreserved balance, and reconciles actual usage afterward. Concurrent in-flight calls and price drift can still cause a small overshoot, so provider-side limits remain necessary. Ollama usage is measured at zero external API cost.
 
 The local budget is a safety control, not a provider billing guarantee. Configure provider-side limits/alerts independently. OpenAI requests should use `store=false` by default when the adapter supports it; the OpenAI Responses API exposes explicit storage behavior and token/tool ceilings in the [official API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create). Claude reads `ANTHROPIC_API_KEY` through its SDK as documented in the [Claude authentication guide](https://platform.claude.com/docs/en/manage-claude/authentication). Ollama's local chat endpoint is documented in its [official API guide](https://docs.ollama.com/api/chat).
 
@@ -81,7 +81,7 @@ AI_MONTHLY_BUDGET_USD=10.00
 AI_BUDGET_HARD_STOP=true
 ```
 
-First-run setup offers `ollama`, `openai`, or `anthropic`. Add the selected provider's key/model only to your uncommitted `.env`; automated tests use a fake adapter. Never paste credentials into issues, commits, logs, or prompts.
+First-run setup offers `ollama`, `openai`, or `anthropic`. Add the selected provider's key/model to your uncommitted `.env`, or paste a hosted key into the masked localhost field for the current API session. Automated tests use a fake adapter and synthetic keys. Never paste credentials into issues, commits, logs, chat prompts, or screenshots.
 
 ## Verification
 
@@ -111,7 +111,7 @@ Build only the `v0.1` path first:
 
 `manual/PDF profile import → confirm extraction → section analysis → before/after suggestion → accept/edit/reject → re-score`
 
-The current implementation includes provider readiness, hosted-cost ledger primitives, manual/PDF import, extraction confirmation, deterministic fact-preserving analysis fallback, section decisions, source download/deletion, and same-rubric re-score. Do not begin calendars, publishing, analytics, or SaaS infrastructure until its exit criteria in [ROADMAP.md](ROADMAP.md) pass.
+The current implementation includes session-only hosted credentials, provider readiness, provider-backed structured profile rewrites, hosted-cost ledger primitives, manual/PDF import, extraction confirmation, deterministic fact-preserving fallback, section decisions, source download/deletion, and same-rubric re-score. Do not begin calendars, publishing, analytics, or SaaS infrastructure until its exit criteria in [ROADMAP.md](ROADMAP.md) pass.
 
 ## License
 

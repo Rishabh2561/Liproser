@@ -23,7 +23,7 @@ Acceptance:
 
 Deliver in order:
 
-1. First-run setup and a provider gateway for Ollama, OpenAI, Claude, and a fake CI provider. No provider is active until configured and checked.
+1. First-run setup and a provider gateway for Ollama, OpenAI, Claude, and a fake CI provider. No provider is active until configured and checked. Hosted keys may be environment-based or session-only in personal mode; they are never persisted by the application.
 2. Transactional hosted-cost reservation and reconciliation across OpenAI plus Claude: USD 10 per UTC calendar month, warning at 80%, hard pre-dispatch rejection when unreserved balance is insufficient. Ollama records usage at zero external API cost.
 3. Manual and PDF profile imports for Headline, About, Experience, Skills, and Featured. Store source provenance, hash, extraction state/confidence, and retained-file location.
 4. Confirmation/correction of uncertain extraction; safe handling of encrypted, malformed, malicious, and oversized PDFs.

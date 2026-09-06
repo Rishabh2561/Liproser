@@ -20,17 +20,30 @@ from .database import (
     ProviderConfiguration,
     get_db,
 )
-from .profile_service import extract_pdf, safe_suggestion, score_sections
-from .providers import provider_readiness
+from .profile_service import (
+    extract_pdf,
+    provider_suggestion_is_safe,
+    safe_suggestion,
+    score_sections,
+)
+from .providers import (
+    generate_profile_rewrites,
+    normalize_model,
+    provider_readiness,
+    provider_secret_source,
+)
+from .runtime_secrets import clear_session_secret, set_session_secret
 from .schemas import (
     AnalysisOutput,
     ConfirmImportRequest,
     DecisionRequest,
+    GeneratedSuggestion,
     ImportResponse,
     ManualImportRequest,
     ProfileSections,
     ProviderCheckRequest,
     ProviderCheckResponse,
+    ProviderSecretRequest,
     SuggestionOutput,
 )
 from .storage import LocalStorage
@@ -61,13 +74,49 @@ def setup(settings: Settings = Depends(get_settings), db: Session = Depends(get_
     }.get(provider, "")
     if configured:
         model = configured.model
+    provider_ready = bool(configured and configured.ready)
+    if provider in {"openai", "anthropic"} and provider_secret_source(settings, provider) == "missing":
+        provider_ready = False
     return {
         "personal_mode": settings.personal_mode,
         "provider": provider,
         "model": model,
-        "provider_configured": bool(configured and configured.ready),
+        "provider_configured": provider_ready,
+        "credential_sources": {
+            name: provider_secret_source(settings, name) for name in ("openai", "anthropic")
+        },
         "secrets_exposed": False,
     }
+
+
+@router.post("/setup/provider-secret")
+def set_provider_secret(body: ProviderSecretRequest, settings: Settings = Depends(get_settings)):
+    if not settings.personal_mode:
+        raise HTTPException(403, "Session credentials are available only in personal mode")
+    set_session_secret(body.provider, body.api_key.get_secret_value())
+    return {
+        "provider": body.provider,
+        "configured": True,
+        "source": "session",
+        "persisted": False,
+        "secrets_exposed": False,
+    }
+
+
+@router.delete("/setup/provider-secret/{provider}")
+def delete_provider_secret(
+    provider: str, settings: Settings = Depends(get_settings), db: Session = Depends(get_db)
+):
+    if provider not in {"openai", "anthropic"}:
+        raise HTTPException(422, "Only hosted-provider session keys can be cleared")
+    if not settings.personal_mode:
+        raise HTTPException(403, "Session credentials are available only in personal mode")
+    cleared = clear_session_secret(provider)
+    configured = db.get(ProviderConfiguration, 1)
+    if configured and configured.provider == provider and provider_secret_source(settings, provider) == "missing":
+        configured.ready = False
+        db.commit()
+    return {"provider": provider, "session_key_cleared": cleared, "secrets_exposed": False}
 
 
 @router.post("/setup/provider-check", response_model=ProviderCheckResponse)
@@ -77,22 +126,23 @@ def provider_check(
     db: Session = Depends(get_db),
 ):
     reservation = None
+    model = normalize_model(body.provider, body.model)
     try:
         if body.provider in {"openai", "anthropic"}:
             reservation = reserve(db, body.provider, 0.01, settings.ai_monthly_budget_usd)
-        ready, detail = provider_readiness(settings, body.provider, body.model)
+        ready, detail = provider_readiness(settings, body.provider, model)
         if reservation:
             reconcile(db, reservation.id, 0.01 if ready else 0)
         if ready:
             configured = db.get(ProviderConfiguration, 1)
             if configured is None:
                 configured = ProviderConfiguration(
-                    id=1, provider=body.provider, model=body.model, ready=True
+                    id=1, provider=body.provider, model=model, ready=True
                 )
                 db.add(configured)
             else:
                 configured.provider = body.provider
-                configured.model = body.model
+                configured.model = model
                 configured.ready = True
                 configured.checked_at = datetime.now(UTC)
             db.commit()
@@ -110,7 +160,7 @@ def provider_check(
             f"Provider check failed with status {getattr(exc, 'response', None).status_code if getattr(exc, 'response', None) else 'unavailable'}",
         )
     return ProviderCheckResponse(
-        ready=ready, provider=body.provider, model=body.model, detail=detail
+        ready=ready, provider=body.provider, model=model, detail=detail
     )
 
 
@@ -221,12 +271,14 @@ def analysis_output(db: Session, analysis: ProfileAnalysis) -> AnalysisOutput:
     items = db.scalars(
         select(ProfileSuggestion).where(ProfileSuggestion.analysis_id == analysis.id)
     ).all()
+    generation = analysis.criteria.get("_generation", {})
+    criteria = {key: value for key, value in analysis.criteria.items() if key != "_generation"}
     return AnalysisOutput(
         id=analysis.id,
         profile_id=analysis.profile_id,
         rubric_version=analysis.rubric_version,
         total_score=analysis.total_score,
-        criteria=analysis.criteria,
+        criteria=criteria,
         suggestions=[
             SuggestionOutput.model_validate(
                 {
@@ -243,22 +295,100 @@ def analysis_output(db: Session, analysis: ProfileAnalysis) -> AnalysisOutput:
             )
             for x in items
         ],
+        generation_provider=generation.get("provider", "deterministic"),
+        generation_model=generation.get("model", "profile-safe@1"),
+        generation_mode=generation.get("mode", "deterministic_fallback"),
+        generation_warning=generation.get("warning"),
     )
 
 
 @router.post("/profiles/{profile_id}/analyses", response_model=AnalysisOutput, status_code=201)
-def analyze(profile_id: str, db: Session = Depends(get_db)):
+def analyze(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
     profile = db.get(Profile, profile_id)
     if not profile:
         raise HTTPException(404, "Profile not found")
     sections = ProfileSections(**profile.sections)
     total, criteria = score_sections(sections)
+    configured = db.get(ProviderConfiguration, 1)
+    generated: dict[str, GeneratedSuggestion] = {}
+    generation = {
+        "provider": "deterministic",
+        "model": "profile-safe@1",
+        "mode": "deterministic_fallback",
+        "warning": None,
+    }
+    reservation = None
+    if (
+        configured
+        and configured.ready
+        and configured.provider not in {"fake", "unconfigured"}
+        and (
+            configured.provider not in {"openai", "anthropic"}
+            or provider_secret_source(settings, configured.provider) != "missing"
+        )
+    ):
+        generation.update(provider=configured.provider, model=configured.model)
+        try:
+            if configured.provider in {"openai", "anthropic"}:
+                estimate = min(0.10, settings.ai_max_request_cost_usd)
+                reservation = reserve(
+                    db, configured.provider, estimate, settings.ai_monthly_budget_usd
+                )
+            raw, _usage = generate_profile_rewrites(
+                settings,
+                configured.provider,
+                configured.model,
+                sections,
+                profile.target_role,
+                profile.domain,
+            )
+            parsed = [GeneratedSuggestion.model_validate(item) for item in raw]
+            if len(parsed) != len(ProfileSections.model_fields):
+                raise ValueError("Provider did not return all profile sections")
+            generated = {item.section: item for item in parsed}
+            if set(generated) != set(ProfileSections.model_fields):
+                raise ValueError("Provider returned duplicate or unknown profile sections")
+            generation["mode"] = "provider"
+            if reservation:
+                reconcile(db, reservation.id, reservation.estimated_usd)
+        except BudgetExceededError:
+            generation["warning"] = "AI budget exhausted; deterministic suggestions were used."
+        except Exception as exc:
+            if reservation and reservation.status == "RESERVED":
+                reconcile(db, reservation.id, 0)
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            suffix = f" (provider status {status})" if status else ""
+            generation["warning"] = f"AI provider unavailable; deterministic suggestions were used{suffix}."
+    elif configured and configured.provider in {"openai", "anthropic"}:
+        generation.update(
+            provider=configured.provider,
+            model=configured.model,
+            warning="The hosted provider key is missing; deterministic suggestions were used.",
+        )
+    criteria["_generation"] = generation
     analysis = ProfileAnalysis(
         id=str(uuid4()), profile_id=profile_id, total_score=total, criteria=criteria
     )
     db.add(analysis)
+    unsafe_sections: list[str] = []
     for section, before in sections.model_dump().items():
-        after, rationale, preserved, proposed, confidence = safe_suggestion(section, before)
+        candidate = generated.get(section)
+        if candidate and provider_suggestion_is_safe(
+            before, candidate.after, candidate.proposed_claims
+        ):
+            after = candidate.after
+            rationale = candidate.rationale
+            preserved = candidate.preserved_facts
+            proposed = candidate.proposed_claims
+            confidence = candidate.confidence
+        else:
+            if candidate:
+                unsafe_sections.append(section)
+            after, rationale, preserved, proposed, confidence = safe_suggestion(section, before)
         db.add(
             ProfileSuggestion(
                 id=str(uuid4()),
@@ -272,6 +402,13 @@ def analyze(profile_id: str, db: Session = Depends(get_db)):
                 confidence=confidence,
             )
         )
+    if unsafe_sections:
+        generation["warning"] = (
+            "Some AI rewrites failed fact-preservation checks and used deterministic fallbacks: "
+            + ", ".join(unsafe_sections)
+            + "."
+        )
+        analysis.criteria = criteria
     db.commit()
     return analysis_output(db, analysis)
 
@@ -308,8 +445,12 @@ def decide(suggestion_id: str, body: DecisionRequest, db: Session = Depends(get_
 
 
 @router.post("/profiles/{profile_id}/rescore", response_model=AnalysisOutput)
-def rescore(profile_id: str, db: Session = Depends(get_db)):
-    return analyze(profile_id, db)
+def rescore(
+    profile_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    return analyze(profile_id, db, settings)
 
 
 @router.get("/usage/ai-budget")

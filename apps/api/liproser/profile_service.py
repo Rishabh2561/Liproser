@@ -111,3 +111,38 @@ def safe_suggestion(section: str, before: str) -> tuple[str, str, list[str], lis
         after = text
         rationale = "Preserves the supplied content; add a descriptive label or outcome after confirming it."
     return after, rationale, preserved, [], 0.95
+
+
+def factual_markers(text: str) -> set[str]:
+    numbers = re.findall(r"\b\d[\d.,%+\-]*\b", text)
+    named = re.findall(r"\b[A-Z][A-Za-z0-9+#.\-]{1,}\b", text)
+    ordinary_starts = {
+        "a",
+        "an",
+        "as",
+        "at",
+        "built",
+        "created",
+        "developed",
+        "i",
+        "implemented",
+        "in",
+        "led",
+        "my",
+        "our",
+        "the",
+        "we",
+    }
+    return {
+        value.casefold()
+        for value in [*numbers, *named]
+        if value.casefold() not in ordinary_starts
+    }
+
+
+def provider_suggestion_is_safe(before: str, after: str, proposed_claims: list[str]) -> bool:
+    if proposed_claims or not after.strip():
+        return False
+    before_markers = factual_markers(before)
+    after_markers = factual_markers(after)
+    return before_markers <= after_markers and after_markers <= before_markers

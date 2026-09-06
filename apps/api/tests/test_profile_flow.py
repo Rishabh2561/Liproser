@@ -1,7 +1,10 @@
 from io import BytesIO
 
+from liproser.database import ProviderConfiguration, engine
+from liproser.runtime_secrets import set_session_secret
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from sqlalchemy.orm import Session
 
 SECTIONS = {
     "headline": "Backend Engineer | Python | FastAPI",
@@ -17,6 +20,8 @@ def test_v01_application_api_contract(client):
     expected = {
         "/v1/setup",
         "/v1/setup/provider-check",
+        "/v1/setup/provider-secret",
+        "/v1/setup/provider-secret/{provider}",
         "/v1/profile-imports",
         "/v1/profile-imports/{import_id}",
         "/v1/profile-imports/{import_id}/confirm",
@@ -140,3 +145,55 @@ def test_setup_and_budget_never_expose_secrets(client):
     assert budget.status_code == 200
     assert budget.json()["limit_usd"] == 10.0
     assert budget.json()["remaining_usd"] == 10.0
+
+
+def test_session_provider_secret_is_never_returned_or_persisted(client):
+    secret = "synthetic-provider-value-for-tests"
+    saved = client.post(
+        "/v1/setup/provider-secret", json={"provider": "openai", "api_key": secret}
+    )
+    assert saved.status_code == 200
+    assert secret not in saved.text
+    setup = client.get("/v1/setup")
+    assert setup.json()["credential_sources"]["openai"] == "session"
+    assert secret not in setup.text
+    cleared = client.delete("/v1/setup/provider-secret/openai")
+    assert cleared.json()["session_key_cleared"] is True
+    assert client.get("/v1/setup").json()["credential_sources"]["openai"] == "missing"
+
+
+def test_ready_provider_generates_profile_rewrites_with_provenance(client, monkeypatch):
+    set_session_secret("openai", "synthetic-provider-value-for-tests")
+    with Session(engine) as db:
+        db.add(
+            ProviderConfiguration(
+                id=1, provider="openai", model="gpt-5.6-terra", ready=True
+            )
+        )
+        db.commit()
+
+    def generated(*_args, **_kwargs):
+        return ([
+            {
+                "section": section,
+                "after": value,
+                "rationale": "Provider rewrite preserved supplied facts.",
+                "preserved_facts": [value] if value else [],
+                "proposed_claims": [],
+                "confidence": 0.9,
+            }
+            for section, value in SECTIONS.items()
+        ], {"input_tokens": 100, "output_tokens": 100})
+
+    monkeypatch.setattr("liproser.api.generate_profile_rewrites", generated)
+    imported = client.post("/v1/profile-imports", json={"kind": "MANUAL", "sections": SECTIONS})
+    confirmed = client.post(
+        f"/v1/profile-imports/{imported.json()['id']}/confirm",
+        json={"sections": SECTIONS, "target_role": "Backend Engineer", "domain": "software"},
+    )
+    audit = client.post(f"/v1/profiles/{confirmed.json()['profile_id']}/analyses")
+    assert audit.status_code == 201
+    assert audit.json()["generation_mode"] == "provider"
+    assert audit.json()["generation_provider"] == "openai"
+    assert audit.json()["generation_model"] == "gpt-5.6-terra"
+    assert audit.json()["generation_warning"] is None

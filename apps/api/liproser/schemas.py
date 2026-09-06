@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 class ProfileSections(BaseModel):
@@ -52,6 +52,15 @@ class SuggestionOutput(BaseModel):
     decision: str | None = None
 
 
+class GeneratedSuggestion(BaseModel):
+    section: Literal["headline", "about", "experience", "skills", "featured"]
+    after: str = Field(min_length=1, max_length=10_000)
+    rationale: str = Field(min_length=1, max_length=2_000)
+    preserved_facts: list[str] = Field(max_length=100)
+    proposed_claims: list[str] = Field(max_length=100)
+    confidence: float = Field(ge=0, le=1)
+
+
 class AnalysisOutput(BaseModel):
     id: str
     profile_id: str
@@ -59,6 +68,10 @@ class AnalysisOutput(BaseModel):
     total_score: float
     criteria: dict[str, Any]
     suggestions: list[SuggestionOutput]
+    generation_provider: str = "deterministic"
+    generation_model: str = "profile-safe@1"
+    generation_mode: Literal["provider", "deterministic_fallback"] = "deterministic_fallback"
+    generation_warning: str | None = None
 
 
 class ProviderCheckRequest(BaseModel):
@@ -71,3 +84,8 @@ class ProviderCheckResponse(BaseModel):
     provider: str
     model: str
     detail: str
+
+
+class ProviderSecretRequest(BaseModel):
+    provider: Literal["openai", "anthropic"]
+    api_key: SecretStr = Field(min_length=10, max_length=500)

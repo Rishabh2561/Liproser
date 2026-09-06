@@ -11,7 +11,7 @@ test("profile lab exposes manual, PDF, decisions, and re-score actions", () => {
     "Confirm facts & run audit",
     "Edit & accept",
     "Delete retained PDF",
-    "Check provider",
+    "Save & check provider",
     "Reject",
     "Re-score accepted changes",
   ]) {
@@ -37,4 +37,12 @@ test("audit targeting and review feedback use persistent inline controls", () =>
   assert.match(page, /Save edited suggestion/);
   assert.match(page, /Save rejection/);
   assert.doesNotMatch(page, /window\.prompt/);
+});
+
+test("hosted AI setup uses a masked session-only key and reports generation provenance", () => {
+  assert.match(page, /type="password"/);
+  assert.match(page, /API key · session only/);
+  assert.match(page, /Clear session key/);
+  assert.match(page, /generation_mode/);
+  assert.doesNotMatch(page, /localStorage/);
 });
