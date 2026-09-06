@@ -14,6 +14,12 @@ MODEL_ALIASES = {
         "terra": "gpt-5.6-terra",
         "gpt 5.6 terra": "gpt-5.6-terra",
         "gpt-5.6 terra": "gpt-5.6-terra",
+        "luna": "gpt-5.6-luna",
+        "gpt 5.6 luna": "gpt-5.6-luna",
+        "gpt-5.6 luna": "gpt-5.6-luna",
+        "sol": "gpt-5.6-sol",
+        "gpt 5.6 sol": "gpt-5.6-sol",
+        "gpt-5.6 sol": "gpt-5.6-sol",
     }
 }
 
@@ -40,6 +46,30 @@ def provider_secret_source(settings: Settings, provider: str) -> str:
     if provider_api_key(settings, provider):
         return "environment"
     return "missing"
+
+
+def provider_failure_detail(provider: str, exc: Exception) -> str:
+    label = "OpenAI" if provider == "openai" else "Claude" if provider == "anthropic" else "Ollama"
+    if isinstance(exc, httpx.TimeoutException):
+        return f"Could not reach {label} before the timeout. Check this machine's internet or firewall access."
+    if isinstance(exc, httpx.NetworkError | OSError):
+        return f"Could not connect to {label}. Check this machine's internet, proxy, or firewall access."
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 401:
+            return f"{label} rejected the API key. Check the key and try again."
+        if status == 403:
+            return f"{label} accepted the request but this account is not allowed to use that model."
+        if status == 404:
+            return f"The model was not found or is not available to this {label} account. Check the API model ID."
+        if status == 429:
+            return f"{label} rate or billing limits blocked the request. Check provider usage and billing."
+        if status == 400:
+            return f"{label} rejected the model or structured-output configuration. Check the API model ID."
+        return f"{label} returned HTTP {status}."
+    if isinstance(exc, ValueError):
+        return f"{label} returned an invalid structured response. Try the check again or choose another model."
+    return f"{label} provider check failed unexpectedly."
 
 
 def _profile_schema() -> dict[str, Any]:

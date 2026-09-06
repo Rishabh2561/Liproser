@@ -29,6 +29,7 @@ from .profile_service import (
 from .providers import (
     generate_profile_rewrites,
     normalize_model,
+    provider_failure_detail,
     provider_readiness,
     provider_secret_source,
 )
@@ -148,17 +149,10 @@ def provider_check(
             db.commit()
     except BudgetExceededError as exc:
         raise HTTPException(402, str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        if reservation:
-            reconcile(db, reservation.id, 0)
-        ready, detail = False, f"Provider check failed: {type(exc).__name__}"
     except Exception as exc:
         if reservation:
             reconcile(db, reservation.id, 0)
-        ready, detail = (
-            False,
-            f"Provider check failed with status {getattr(exc, 'response', None).status_code if getattr(exc, 'response', None) else 'unavailable'}",
-        )
+        ready, detail = False, provider_failure_detail(body.provider, exc)
     return ProviderCheckResponse(
         ready=ready, provider=body.provider, model=model, detail=detail
     )

@@ -1,7 +1,12 @@
 import json
 
+import httpx
 from liproser.config import Settings
-from liproser.providers import normalize_model, provider_readiness
+from liproser.providers import (
+    normalize_model,
+    provider_failure_detail,
+    provider_readiness,
+)
 from liproser.runtime_secrets import set_session_secret
 
 
@@ -39,8 +44,25 @@ class FakeClient:
         return FakeResponse()
 
 
-def test_terra_display_name_normalizes_to_api_model_id():
+def test_openai_display_names_normalize_to_api_model_ids():
     assert normalize_model("openai", "Terra") == "gpt-5.6-terra"
+    assert normalize_model("openai", "GPT-5.6 Luna") == "gpt-5.6-luna"
+    assert normalize_model("openai", "GPT 5.6 Sol") == "gpt-5.6-sol"
+
+
+def test_provider_failures_are_actionable_without_exposing_response_bodies():
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    network = httpx.ConnectError("socket detail", request=request)
+    assert "internet, proxy, or firewall" in provider_failure_detail("openai", network)
+
+    unauthorized = httpx.HTTPStatusError(
+        "sensitive response detail",
+        request=request,
+        response=httpx.Response(401, request=request),
+    )
+    detail = provider_failure_detail("openai", unauthorized)
+    assert detail == "OpenAI rejected the API key. Check the key and try again."
+    assert "sensitive" not in detail
 
 
 def test_openai_probe_uses_session_key_structured_output_and_no_storage(monkeypatch):

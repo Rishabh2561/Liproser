@@ -41,7 +41,7 @@ export default function Home() {
   }, []);
 
   function chooseProvider(value: string) {
-    const defaults: Record<string,string> = {fake:"fake-v1",ollama:"gemma3",openai:"gpt-5.6-terra",anthropic:""};
+    const defaults: Record<string,string> = {fake:"fake-v1",ollama:"gemma3",openai:"gpt-5.6-luna",anthropic:""};
     setProvider(value);
     setModel(defaults[value] ?? "");
     setApiKey("");
