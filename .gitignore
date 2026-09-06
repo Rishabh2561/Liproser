@@ -17,6 +17,7 @@ backups/
 # Python
 .venv/
 venv/
+*.egg-info/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -37,6 +38,7 @@ pnpm-debug.log*
 dist/
 build/
 .cache/
+.pnpm-store/
 .turbo/
 .docker/
 postgres-data/

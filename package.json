@@ -1,0 +1,11 @@
+{
+  "name": "liproser",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "dev": "pnpm --filter @liproser/web dev",
+    "build": "pnpm --filter @liproser/web build",
+    "lint": "pnpm --filter @liproser/web lint",
+    "test": "pnpm --filter @liproser/web test"
+  }
+}

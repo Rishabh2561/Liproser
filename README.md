@@ -2,7 +2,7 @@
 
 Liproser is a personal-first AI system for improving a LinkedIn profile and building a repeatable, evidence-aware content workflow. It starts as the founder's private operating system; capabilities are generalized into SaaS features only after sustained personal use demonstrates value.
 
-> **Current status:** planning, evaluation, and repository foundation. Application code has not started.
+> **Current status:** `v0.1` profile optimizer implemented for local personal use. Content creation and later releases have not started.
 
 ## What Liproser will do
 
@@ -60,12 +60,15 @@ The local budget is a safety control, not a provider billing guarantee. Configur
 | [evals/](evals/) | Synthetic evaluation fixtures and scoring instructions |
 | [scripts/verify-repository.ps1](scripts/verify-repository.ps1) | Local/CI repository checks |
 
-## Configuration
+## Local setup
 
 The committed template is `.env.example`; the working `.env` is ignored by Git.
 
 ```powershell
 Copy-Item -LiteralPath .env.example -Destination .env
+& 'C:\Users\rigu\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m venv .venv
+& '.\.venv\Scripts\python.exe' -m pip install -e '.[dev]'
+pnpm install
 ```
 
 Default personal configuration:
@@ -92,13 +95,23 @@ The script validates required files, local Markdown links, code fences, environm
 
 Application-specific setup and tests will be added with the first vertical slice. A feature is pushed only after relevant tests pass and the diff is reviewed.
 
-## First implementation slice
+Start PostgreSQL using `DATABASE_URL`, apply the schema, then run API and web in separate PowerShell terminals:
+
+```powershell
+& '.\.venv\Scripts\alembic.exe' upgrade head
+& '.\.venv\Scripts\python.exe' -m uvicorn liproser.main:app --app-dir apps/api --host 127.0.0.1 --port 8000 --reload
+pnpm --filter @liproser/web dev
+```
+
+Open `http://127.0.0.1:3000`. Personal mode refuses production or non-loopback binding. Uploaded PDFs are retained under the ignored `PRIVATE_STORAGE_ROOT` until you use the visible delete action.
+
+## Implemented `v0.1` slice
 
 Build only the `v0.1` path first:
 
 `manual/PDF profile import → confirm extraction → section analysis → before/after suggestion → accept/edit/reject → re-score`
 
-Do not begin calendars, publishing, analytics, or SaaS infrastructure until its exit criteria in [ROADMAP.md](ROADMAP.md) pass.
+The current implementation includes provider readiness, hosted-cost ledger primitives, manual/PDF import, extraction confirmation, deterministic fact-preserving analysis fallback, section decisions, source download/deletion, and same-rubric re-score. Do not begin calendars, publishing, analytics, or SaaS infrastructure until its exit criteria in [ROADMAP.md](ROADMAP.md) pass.
 
 ## License
 

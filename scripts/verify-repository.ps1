@@ -15,7 +15,13 @@ try {
         '.env.example',
         '.gitignore',
         '.editorconfig',
-        '.gitattributes'
+        '.gitattributes',
+        'pyproject.toml',
+        'package.json',
+        'pnpm-lock.yaml',
+        'apps/api/liproser/main.py',
+        'apps/web/app/page.tsx',
+        'migrations/versions/0001_v01_profile_optimizer.py'
     )
 
     foreach ($requiredFile in $requiredFiles) {

@@ -12,7 +12,21 @@ permissions:
 jobs:
   foundation:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: liproser
+          POSTGRES_PASSWORD: liproser
+          POSTGRES_DB: liproser
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U liproser"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -22,3 +36,37 @@ jobs:
       - name: Verify repository
         shell: pwsh
         run: ./scripts/verify-repository.ps1
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install and test API
+        env:
+          DATABASE_URL: postgresql+psycopg://liproser:liproser@127.0.0.1:5432/liproser
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m ruff check apps/api migrations
+          python -m pytest -q
+          alembic upgrade head
+          alembic downgrade base
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: Test and build web
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm lint
+          pnpm test
+          pnpm build
