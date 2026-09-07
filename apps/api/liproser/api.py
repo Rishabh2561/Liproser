@@ -15,13 +15,17 @@ from .content_service import (
     audience_tags,
     canonical_tag,
     deterministic_primary_draft,
+    deterministic_regeneration_draft,
+    evaluate_revision_checks,
     generated_draft_is_traceable,
+    user_edit_claims,
 )
 from .database import (
     BOOTSTRAP_WORKSPACE_ID,
     AiBudgetPeriod,
     ClaimAssessment,
     ContentIdea,
+    EditDelta,
     Post,
     PostRevision,
     Profile,
@@ -29,6 +33,8 @@ from .database import (
     ProfileImport,
     ProfileSuggestion,
     ProviderConfiguration,
+    Review,
+    RevisionCheck,
     SourceReference,
     TaxonomySnapshot,
     VoiceProfile,
@@ -62,11 +68,17 @@ from .schemas import (
     GeneratedSuggestion,
     ImportResponse,
     ManualImportRequest,
+    PostEditRequest,
     PrimaryDraftOutput,
     ProfileSections,
     ProviderCheckRequest,
     ProviderCheckResponse,
     ProviderSecretRequest,
+    RegenerationRequest,
+    ReviewDecisionRequest,
+    ReviewOutput,
+    ReviewSubmissionRequest,
+    RevisionCheckOutput,
     SourceReferenceOutput,
     SuggestionOutput,
     TaxonomyOutput,
@@ -142,10 +154,25 @@ def primary_draft_output(db: Session, post: Post, revision: PostRevision) -> Pri
     claims = db.scalars(
         select(ClaimAssessment).where(ClaimAssessment.post_revision_id == revision.id)
     ).all()
+    checks = db.scalars(
+        select(RevisionCheck)
+        .where(RevisionCheck.post_revision_id == revision.id)
+        .order_by(RevisionCheck.created_at, RevisionCheck.id)
+    ).all()
+    reviews = db.scalars(
+        select(Review).where(Review.post_id == post.id).order_by(Review.created_at, Review.id)
+    ).all()
+    revision_numbers = dict(
+        db.execute(
+            select(PostRevision.id, PostRevision.revision_number).where(
+                PostRevision.post_id == post.id
+            )
+        ).all()
+    )
     return PrimaryDraftOutput(
         post_id=post.id,
         revision_id=revision.id,
-        state="DRAFT",
+        state=post.state,
         revision_number=revision.revision_number,
         hook=revision.hook,
         body=revision.body,
@@ -170,8 +197,254 @@ def primary_draft_output(db: Session, post: Post, revision: PostRevision) -> Pri
             )
             for claim in claims
         ],
+        checks=[
+            RevisionCheckOutput(
+                id=check.id,
+                check_type=check.check_type,
+                severity=check.severity,
+                passed=check.passed,
+                message=check.message,
+                details=check.details,
+            )
+            for check in checks
+        ],
+        reviews=[
+            ReviewOutput(
+                id=review.id,
+                revision_id=review.revision_id,
+                revision_number=revision_numbers[review.revision_id],
+                action=review.action,
+                reason=review.reason,
+                categories=review.categories,
+                claims_confirmed=review.claims_confirmed,
+                actor="LOCAL_OWNER",
+                created_at=review.created_at,
+            )
+            for review in reviews
+        ],
         created_at=revision.created_at,
     )
+
+
+def current_revision(db: Session, post: Post) -> PostRevision:
+    revision = db.scalars(
+        select(PostRevision)
+        .where(PostRevision.post_id == post.id)
+        .order_by(PostRevision.revision_number.desc())
+        .limit(1)
+    ).first()
+    if not revision:
+        raise HTTPException(409, "Post has no revision")
+    return revision
+
+
+def require_current_revision(db: Session, post: Post, revision_id: str) -> PostRevision:
+    revision = current_revision(db, post)
+    if revision.id != revision_id:
+        raise HTTPException(409, "The requested revision is stale; review the current revision")
+    return revision
+
+
+def revision_context(db: Session, post: Post):
+    idea = db.get(ContentIdea, post.content_idea_id)
+    voice = db.get(VoiceProfile, idea.voice_profile_id)
+    evidence = db.scalars(
+        select(SourceReference)
+        .where(SourceReference.content_idea_id == idea.id)
+        .order_by(SourceReference.created_at, SourceReference.id)
+    ).all()
+    allowed_context = "\n".join(
+        (
+            voice.domain,
+            voice.target_audience,
+            idea.pillar,
+            idea.topic,
+            idea.angle,
+            idea.audience_intent,
+        )
+    )
+    return idea, voice, evidence, allowed_context
+
+
+def persist_revision_checks(
+    db: Session,
+    revision: PostRevision,
+    claims: list[dict],
+    allowed_context: str,
+    evidence: list[SourceReference],
+    prohibited_phrases: list[str],
+) -> None:
+    for finding in evaluate_revision_checks(
+        revision.content,
+        claims,
+        allowed_context,
+        [item.statement for item in evidence],
+        prohibited_phrases,
+    ):
+        db.add(
+            RevisionCheck(
+                id=str(uuid4()),
+                post_revision_id=revision.id,
+                check_type=finding["check_type"],
+                severity=finding["severity"],
+                passed=finding["passed"],
+                message=finding["message"],
+                details=finding["details"],
+            )
+        )
+
+
+def ensure_revision_checks(db: Session, post: Post, revision: PostRevision) -> None:
+    if db.scalar(
+        select(RevisionCheck.id).where(RevisionCheck.post_revision_id == revision.id).limit(1)
+    ):
+        return
+    _, voice, evidence, allowed_context = revision_context(db, post)
+    claims = db.scalars(
+        select(ClaimAssessment).where(ClaimAssessment.post_revision_id == revision.id)
+    ).all()
+    persist_revision_checks(
+        db,
+        revision,
+        [{"text": claim.claim_text, "kind": claim.kind} for claim in claims],
+        allowed_context,
+        evidence,
+        voice.prohibited_phrases,
+    )
+    db.flush()
+
+
+def generate_content_candidate(
+    db: Session,
+    settings: Settings,
+    idea: ContentIdea,
+    voice: VoiceProfile,
+    evidence: list[SourceReference],
+    feedback: dict | None = None,
+    previous_revision: PostRevision | None = None,
+):
+    samples = db.scalars(
+        select(VoiceSample)
+        .where(VoiceSample.voice_profile_id == voice.id)
+        .order_by(VoiceSample.position)
+    ).all()
+    generated = (
+        deterministic_regeneration_draft(
+            idea.topic,
+            idea.angle,
+            feedback.get("categories", []),
+            [item.statement for item in evidence],
+        )
+        if feedback
+        else deterministic_primary_draft(idea.topic, idea.angle)
+    )
+    generation = {
+        "provider": "deterministic",
+        "model": "primary-draft-safe@1",
+        "mode": "deterministic_fallback",
+        "warning": (
+            "No ready AI provider was available; a safe category-based regeneration was used. "
+            "Free-form instructions may require a ready AI provider."
+            if feedback
+            else "No ready AI provider was available; a safe structured draft was used."
+        ),
+    }
+    configured = db.get(ProviderConfiguration, 1)
+    reservation = None
+    if configured:
+        generation.update(provider=configured.provider, model=configured.model)
+    provider_ready = bool(configured and configured.ready)
+    if configured and configured.provider in {"openai", "anthropic"}:
+        provider_ready = (
+            provider_ready
+            and provider_secret_source(settings, configured.provider) != "missing"
+        )
+    if configured and provider_ready and configured.provider not in {"fake", "unconfigured"}:
+        try:
+            if configured.provider in {"openai", "anthropic"}:
+                estimate = min(0.25, settings.ai_max_request_cost_usd)
+                reservation = reserve(
+                    db, configured.provider, estimate, settings.ai_monthly_budget_usd
+                )
+            idea_payload = {
+                "pillar": idea.pillar,
+                "topic": idea.topic,
+                "angle": idea.angle,
+                "audience_intent": idea.audience_intent,
+                "format": idea.format,
+            }
+            if feedback:
+                idea_payload["regeneration_feedback"] = feedback
+            if previous_revision:
+                idea_payload["previous_revision"] = {
+                    "hook": previous_revision.hook,
+                    "body": previous_revision.body,
+                    "cta": previous_revision.cta,
+                }
+            raw, _usage = generate_primary_draft(
+                settings,
+                configured.provider,
+                configured.model,
+                {
+                    "domain": voice.domain,
+                    "target_audience": voice.target_audience,
+                    "tone_preferences": voice.tone_preferences,
+                    "prohibited_phrases": voice.prohibited_phrases,
+                    "user_owned_samples": [sample.text for sample in samples],
+                },
+                idea_payload,
+                [
+                    {
+                        "index": index,
+                        "statement": item.statement,
+                        "source_url": item.source_url,
+                        "freshness_date": item.freshness_date,
+                    }
+                    for index, item in enumerate(evidence, start=1)
+                ],
+            )
+            candidate = GeneratedDraft.model_validate(raw)
+            candidate_data = candidate.model_dump()
+            allowed_context = "\n".join(
+                (
+                    voice.domain,
+                    voice.target_audience,
+                    idea.pillar,
+                    idea.topic,
+                    idea.angle,
+                    idea.audience_intent,
+                )
+            )
+            content = "\n\n".join((candidate.hook, candidate.body, candidate.cta))
+            prohibited = any(
+                phrase.casefold() in content.casefold() for phrase in voice.prohibited_phrases
+            )
+            traceable = generated_draft_is_traceable(
+                candidate.hook,
+                candidate.body,
+                candidate.cta,
+                [claim.model_dump() for claim in candidate.claims],
+                [item.statement for item in evidence],
+                allowed_context,
+            )
+            if prohibited or not traceable:
+                generation["warning"] = (
+                    "The AI draft failed evidence or voice-boundary checks; a safe draft was used."
+                )
+            else:
+                generated = candidate_data
+                generation.update(mode="provider", warning=None)
+            if reservation:
+                reconcile(db, reservation.id, reservation.estimated_usd)
+        except BudgetExceededError:
+            generation["warning"] = "AI budget exhausted; a safe structured draft was used."
+        except Exception as exc:
+            if reservation and reservation.status == "RESERVED":
+                reconcile(db, reservation.id, 0)
+            generation["warning"] = provider_failure_detail(configured.provider, exc)
+    elif configured and configured.provider == "fake":
+        generation["warning"] = "The fake provider uses the safe deterministic draft."
+    return generated, generation
 
 
 def import_output(item: ProfileImport) -> ImportResponse:
@@ -344,106 +617,22 @@ def create_primary_draft(
     if db.scalar(select(Post.id).where(Post.content_idea_id == idea.id)):
         raise HTTPException(409, "This idea already has its one primary draft")
     voice = db.get(VoiceProfile, idea.voice_profile_id)
-    samples = db.scalars(
-        select(VoiceSample)
-        .where(VoiceSample.voice_profile_id == voice.id)
-        .order_by(VoiceSample.position)
-    ).all()
     evidence = db.scalars(
         select(SourceReference)
         .where(SourceReference.content_idea_id == idea.id)
         .order_by(SourceReference.created_at, SourceReference.id)
     ).all()
-    generated = deterministic_primary_draft(idea.topic, idea.angle)
-    generation = {
-        "provider": "deterministic",
-        "model": "primary-draft-safe@1",
-        "mode": "deterministic_fallback",
-        "warning": "No ready AI provider was available; a safe structured draft was used.",
-    }
-    configured = db.get(ProviderConfiguration, 1)
-    reservation = None
-    if configured:
-        generation.update(provider=configured.provider, model=configured.model)
-    provider_ready = bool(configured and configured.ready)
-    if configured and configured.provider in {"openai", "anthropic"}:
-        provider_ready = provider_ready and provider_secret_source(settings, configured.provider) != "missing"
-    if configured and provider_ready and configured.provider not in {"fake", "unconfigured"}:
-        try:
-            if configured.provider in {"openai", "anthropic"}:
-                estimate = min(0.25, settings.ai_max_request_cost_usd)
-                reservation = reserve(
-                    db, configured.provider, estimate, settings.ai_monthly_budget_usd
-                )
-            raw, _usage = generate_primary_draft(
-                settings,
-                configured.provider,
-                configured.model,
-                {
-                    "domain": voice.domain,
-                    "target_audience": voice.target_audience,
-                    "tone_preferences": voice.tone_preferences,
-                    "prohibited_phrases": voice.prohibited_phrases,
-                    "user_owned_samples": [sample.text for sample in samples],
-                },
-                {
-                    "pillar": idea.pillar,
-                    "topic": idea.topic,
-                    "angle": idea.angle,
-                    "audience_intent": idea.audience_intent,
-                    "format": idea.format,
-                },
-                [
-                    {
-                        "index": index,
-                        "statement": item.statement,
-                        "source_url": item.source_url,
-                        "freshness_date": item.freshness_date,
-                    }
-                    for index, item in enumerate(evidence, start=1)
-                ],
-            )
-            candidate = GeneratedDraft.model_validate(raw)
-            candidate_data = candidate.model_dump()
-            allowed_context = "\n".join(
-                (
-                    voice.domain,
-                    voice.target_audience,
-                    idea.pillar,
-                    idea.topic,
-                    idea.angle,
-                    idea.audience_intent,
-                )
-            )
-            content = "\n\n".join((candidate.hook, candidate.body, candidate.cta))
-            prohibited = any(
-                phrase.casefold() in content.casefold() for phrase in voice.prohibited_phrases
-            )
-            traceable = generated_draft_is_traceable(
-                candidate.hook,
-                candidate.body,
-                candidate.cta,
-                [claim.model_dump() for claim in candidate.claims],
-                [item.statement for item in evidence],
-                allowed_context,
-            )
-            if prohibited or not traceable:
-                generation["warning"] = (
-                    "The AI draft failed evidence or voice-boundary checks; a safe draft was used."
-                )
-            else:
-                generated = candidate_data
-                generation.update(mode="provider", warning=None)
-            if reservation:
-                reconcile(db, reservation.id, reservation.estimated_usd)
-        except BudgetExceededError:
-            generation["warning"] = "AI budget exhausted; a safe structured draft was used."
-        except Exception as exc:
-            if reservation and reservation.status == "RESERVED":
-                reconcile(db, reservation.id, 0)
-            generation["warning"] = provider_failure_detail(configured.provider, exc)
-    elif configured and configured.provider == "fake":
-        generation["warning"] = "The fake provider uses the safe deterministic draft."
+    generated, generation = generate_content_candidate(db, settings, idea, voice, evidence)
+    allowed_context = "\n".join(
+        (
+            voice.domain,
+            voice.target_audience,
+            idea.pillar,
+            idea.topic,
+            idea.angle,
+            idea.audience_intent,
+        )
+    )
 
     post = Post(id=str(uuid4()), content_idea_id=idea.id, state="DRAFT")
     db.add(post)
@@ -482,6 +671,14 @@ def create_primary_draft(
                 source_reference_ids=source_ids,
             )
         )
+    persist_revision_checks(
+        db,
+        revision,
+        generated["claims"],
+        allowed_context,
+        evidence,
+        voice.prohibited_phrases,
+    )
     db.commit()
     db.refresh(post)
     db.refresh(revision)
@@ -493,12 +690,282 @@ def get_post(post_id: str, db: Session = Depends(get_db)):
     post = db.get(Post, post_id)
     if not post or post.workspace_id != BOOTSTRAP_WORKSPACE_ID:
         raise HTTPException(404, "Post not found")
-    revision = db.scalars(
-        select(PostRevision)
-        .where(PostRevision.post_id == post.id)
-        .order_by(PostRevision.revision_number.desc())
+    revision = current_revision(db, post)
+    return primary_draft_output(db, post, revision)
+
+
+@router.post("/posts/{post_id}/submit-review", response_model=PrimaryDraftOutput)
+def submit_post_review(
+    post_id: str,
+    body: ReviewSubmissionRequest,
+    db: Session = Depends(get_db),
+):
+    post = db.get(Post, post_id)
+    if not post or post.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Post not found")
+    revision = require_current_revision(db, post, body.revision_id)
+    if post.state not in {"DRAFT", "CHANGES_REQUESTED"}:
+        raise HTTPException(409, "Only a draft or changes-requested revision can enter review")
+    if db.scalar(
+        select(Review.id).where(Review.revision_id == revision.id, Review.action == "SUBMIT")
+    ):
+        raise HTTPException(409, "This exact revision was already submitted")
+    ensure_revision_checks(db, post, revision)
+    db.add(
+        Review(
+            id=str(uuid4()),
+            post_id=post.id,
+            revision_id=revision.id,
+            action="SUBMIT",
+            claims_confirmed=False,
+        )
+    )
+    post.state = "IN_REVIEW"
+    db.commit()
+    db.refresh(post)
+    return primary_draft_output(db, post, revision)
+
+
+@router.post("/posts/{post_id}/reviews", response_model=PrimaryDraftOutput)
+def decide_post_review(
+    post_id: str,
+    body: ReviewDecisionRequest,
+    db: Session = Depends(get_db),
+):
+    post = db.get(Post, post_id)
+    if not post or post.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Post not found")
+    revision = require_current_revision(db, post, body.revision_id)
+    if post.state != "IN_REVIEW":
+        raise HTTPException(409, "The current revision must be in review")
+    if db.scalar(
+        select(Review.id).where(
+            Review.revision_id == revision.id, Review.action == body.action
+        )
+    ):
+        raise HTTPException(409, "This decision was already recorded for the revision")
+    if body.action == "APPROVE":
+        if not body.claims_confirmed:
+            raise HTTPException(422, "Confirm the exact revision and its claims before approval")
+        ensure_revision_checks(db, post, revision)
+        blocking_failure = db.scalar(
+            select(RevisionCheck.id).where(
+                RevisionCheck.post_revision_id == revision.id,
+                RevisionCheck.severity == "BLOCKING",
+                RevisionCheck.passed.is_(False),
+            )
+        )
+        if blocking_failure:
+            raise HTTPException(409, "Resolve blocking checks before approval")
+        post.state = "APPROVED"
+    elif body.action == "REJECT":
+        if not body.reason:
+            raise HTTPException(422, "A rejection reason is required")
+        post.state = "REJECTED"
+    else:
+        if not body.reason or not body.categories:
+            raise HTTPException(422, "A reason and at least one feedback category are required")
+        post.state = "CHANGES_REQUESTED"
+    db.add(
+        Review(
+            id=str(uuid4()),
+            post_id=post.id,
+            revision_id=revision.id,
+            action=body.action,
+            reason=body.reason,
+            categories=list(body.categories),
+            claims_confirmed=body.claims_confirmed,
+        )
+    )
+    db.commit()
+    db.refresh(post)
+    return primary_draft_output(db, post, revision)
+
+
+@router.post("/posts/{post_id}/edits", response_model=PrimaryDraftOutput, status_code=201)
+def edit_post_revision(
+    post_id: str,
+    body: PostEditRequest,
+    db: Session = Depends(get_db),
+):
+    post = db.get(Post, post_id)
+    if not post or post.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Post not found")
+    previous = require_current_revision(db, post, body.revision_id)
+    if post.state == "REJECTED":
+        raise HTTPException(409, "A rejected post is terminal")
+    values = {"hook": body.hook, "body": body.body, "cta": body.cta}
+    operations = [
+        {"field": field, "before": getattr(previous, field), "after": value}
+        for field, value in values.items()
+        if getattr(previous, field) != value
+    ]
+    if not operations:
+        raise HTTPException(422, "Change at least one field before saving a new revision")
+    idea, voice, evidence, allowed_context = revision_context(db, post)
+    claims = user_edit_claims([body.hook, body.body, body.cta], [item.statement for item in evidence])
+    revision = PostRevision(
+        id=str(uuid4()),
+        post_id=post.id,
+        revision_number=previous.revision_number + 1,
+        hook=body.hook,
+        body=body.body,
+        cta=body.cta,
+        content="\n\n".join((body.hook, body.body, body.cta)),
+        generation_provider="human",
+        generation_model="local-owner",
+        generation_mode="human_edit",
+        generation_warning=None,
+        prompt_version="human-edit@1",
+        taxonomy_version=idea.taxonomy_version,
+        retrieved_revision_ids=[],
+    )
+    db.add(revision)
+    db.flush()
+    for claim in claims:
+        source_ids = [
+            evidence[index - 1].id
+            for index in claim["evidence_indices"]
+            if 1 <= index <= len(evidence)
+        ]
+        db.add(
+            ClaimAssessment(
+                id=str(uuid4()),
+                post_revision_id=revision.id,
+                claim_text=claim["text"],
+                kind=claim["kind"],
+                source_reference_ids=source_ids,
+            )
+        )
+    persist_revision_checks(
+        db, revision, claims, allowed_context, evidence, voice.prohibited_phrases
+    )
+    db.add(
+        EditDelta(
+            id=str(uuid4()),
+            post_id=post.id,
+            from_revision_id=previous.id,
+            to_revision_id=revision.id,
+            operations=operations,
+        )
+    )
+    db.add(
+        Review(
+            id=str(uuid4()),
+            post_id=post.id,
+            revision_id=revision.id,
+            action="EDIT",
+            claims_confirmed=True,
+        )
+    )
+    post.state = "DRAFT"
+    db.commit()
+    db.refresh(post)
+    db.refresh(revision)
+    return primary_draft_output(db, post, revision)
+
+
+@router.post(
+    "/posts/{post_id}/regenerations", response_model=PrimaryDraftOutput, status_code=201
+)
+def regenerate_post_revision(
+    post_id: str,
+    body: RegenerationRequest,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    post = db.get(Post, post_id)
+    if not post or post.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Post not found")
+    previous = require_current_revision(db, post, body.revision_id)
+    if post.state != "CHANGES_REQUESTED":
+        raise HTTPException(409, "Request changes on the current revision before regenerating")
+    feedback = db.scalars(
+        select(Review)
+        .where(
+            Review.revision_id == previous.id,
+            Review.action == "REQUEST_CHANGES",
+        )
+        .order_by(Review.created_at.desc())
         .limit(1)
     ).first()
+    if not feedback:
+        raise HTTPException(409, "Structured regeneration feedback is missing")
+    idea, voice, evidence, allowed_context = revision_context(db, post)
+    generated, generation = generate_content_candidate(
+        db,
+        settings,
+        idea,
+        voice,
+        evidence,
+        feedback={"categories": feedback.categories, "instruction": feedback.reason},
+        previous_revision=previous,
+    )
+    revision = PostRevision(
+        id=str(uuid4()),
+        post_id=post.id,
+        revision_number=previous.revision_number + 1,
+        hook=generated["hook"],
+        body=generated["body"],
+        cta=generated["cta"],
+        content="\n\n".join((generated["hook"], generated["body"], generated["cta"])),
+        generation_provider=generation["provider"],
+        generation_model=generation["model"],
+        generation_mode=generation["mode"],
+        generation_warning=generation["warning"],
+        prompt_version="regeneration@1",
+        taxonomy_version=idea.taxonomy_version,
+        retrieved_revision_ids=[],
+    )
+    db.add(revision)
+    db.flush()
+    for claim in generated["claims"]:
+        source_ids = [
+            evidence[index - 1].id
+            for index in claim.get("evidence_indices", [])
+            if 1 <= index <= len(evidence)
+        ]
+        db.add(
+            ClaimAssessment(
+                id=str(uuid4()),
+                post_revision_id=revision.id,
+                claim_text=claim["text"],
+                kind=claim["kind"],
+                source_reference_ids=source_ids,
+            )
+        )
+    persist_revision_checks(
+        db, revision, generated["claims"], allowed_context, evidence, voice.prohibited_phrases
+    )
+    operations = [
+        {"field": field, "before": getattr(previous, field), "after": generated[field]}
+        for field in ("hook", "body", "cta")
+        if getattr(previous, field) != generated[field]
+    ]
+    db.add(
+        EditDelta(
+            id=str(uuid4()),
+            post_id=post.id,
+            from_revision_id=previous.id,
+            to_revision_id=revision.id,
+            operations=operations,
+        )
+    )
+    db.add(
+        Review(
+            id=str(uuid4()),
+            post_id=post.id,
+            revision_id=revision.id,
+            action="REGENERATE",
+            reason=feedback.reason,
+            categories=feedback.categories,
+            claims_confirmed=False,
+        )
+    )
+    post.state = "DRAFT"
+    db.commit()
+    db.refresh(post)
+    db.refresh(revision)
     return primary_draft_output(db, post, revision)
 
 

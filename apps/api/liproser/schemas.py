@@ -237,14 +237,71 @@ class GeneratedDraft(BaseModel):
 class ClaimAssessmentOutput(BaseModel):
     id: str
     claim_text: str
-    kind: Literal["SUPPORTED", "OPINION"]
+    kind: Literal["SUPPORTED", "OPINION", "CONFIRMED_PERSONAL"]
     source_reference_ids: list[str]
+
+
+class RevisionCheckOutput(BaseModel):
+    id: str
+    check_type: Literal["CLAIM_TRACEABILITY", "PROHIBITED_PHRASES", "READABILITY", "ACCESSIBILITY"]
+    severity: Literal["BLOCKING", "WARNING"]
+    passed: bool
+    message: str
+    details: dict[str, Any]
+
+
+class ReviewOutput(BaseModel):
+    id: str
+    revision_id: str
+    revision_number: int
+    action: Literal["SUBMIT", "EDIT", "REQUEST_CHANGES", "REGENERATE", "REJECT", "APPROVE"]
+    reason: str | None
+    categories: list[str]
+    claims_confirmed: bool
+    actor: Literal["LOCAL_OWNER"]
+    created_at: datetime
+
+
+class ReviewSubmissionRequest(BaseModel):
+    revision_id: str
+
+
+class ReviewDecisionRequest(BaseModel):
+    revision_id: str
+    action: Literal["APPROVE", "REJECT", "REQUEST_CHANGES"]
+    reason: str | None = Field(default=None, max_length=2_000)
+    categories: list[Literal["HOOK", "TONE", "CLARITY", "CTA", "LENGTH", "EVIDENCE"]] = Field(
+        default_factory=list, max_length=6
+    )
+    claims_confirmed: bool = False
+
+    @field_validator("reason")
+    @classmethod
+    def strip_review_reason(cls, value: str | None) -> str | None:
+        return value.strip() if value and value.strip() else None
+
+
+class PostEditRequest(BaseModel):
+    revision_id: str
+    hook: str = Field(min_length=1, max_length=600)
+    body: str = Field(min_length=1, max_length=8_000)
+    cta: str = Field(min_length=1, max_length=600)
+    claims_confirmed: Literal[True]
+
+    @field_validator("hook", "body", "cta")
+    @classmethod
+    def strip_revision_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class RegenerationRequest(BaseModel):
+    revision_id: str
 
 
 class PrimaryDraftOutput(BaseModel):
     post_id: str
     revision_id: str
-    state: Literal["DRAFT"]
+    state: Literal["DRAFT", "IN_REVIEW", "CHANGES_REQUESTED", "REJECTED", "APPROVED"]
     revision_number: int
     hook: str
     body: str
@@ -256,9 +313,11 @@ class PrimaryDraftOutput(BaseModel):
     taxonomy_version: str
     generation_provider: str
     generation_model: str
-    generation_mode: Literal["provider", "deterministic_fallback"]
+    generation_mode: Literal["provider", "deterministic_fallback", "human_edit"]
     generation_warning: str | None
     prompt_version: str
     retrieved_revision_ids: list[str]
     claims: list[ClaimAssessmentOutput]
+    checks: list[RevisionCheckOutput]
+    reviews: list[ReviewOutput]
     created_at: datetime

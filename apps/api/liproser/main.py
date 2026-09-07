@@ -16,7 +16,7 @@ def create_app() -> FastAPI:
         create_schema()
         yield
 
-    app = FastAPI(title="Liproser application API", version="0.2.0-alpha.2", lifespan=lifespan)
+    app = FastAPI(title="Liproser application API", version="0.2.0-alpha.3", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],

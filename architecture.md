@@ -137,7 +137,8 @@ All routes require server-resolved workspace scope, rate limits, request IDs, an
 |---|---|
 | `v0.2A` implemented | `POST /voice-profiles`, `GET /voice-profiles/current`, `GET /taxonomy/current` |
 | `v0.2B` implemented | `POST/GET /content-ideas`, `POST /content-ideas/{id}/primary-draft`, `GET /posts/{id}` with evidence and claim provenance |
-| `v0.2C–D` | `/post-revisions`, `/reviews`, `/memory/revisions` plus review and retrieval operations |
+| `v0.2C` implemented | `POST /posts/{id}/submit-review`, `/posts/{id}/reviews`, `/posts/{id}/edits`, and `/posts/{id}/regenerations` with exact-revision guards |
+| `v0.2D` | `/memory/revisions` plus first-party retrieval and originality operations |
 | `v0.3` | `/calendars`, `/schedules`, `/publish-actions`, `/feedback` |
 | `v0.4` | `/metric-snapshots`, `/analytics`, `/predictions` |
 | Capability gated | `/integrations/linkedin`, `/integrations/linkedin/capabilities`, `/integrations/linkedin/syncs` |
@@ -146,7 +147,7 @@ All routes require server-resolved workspace scope, rate limits, request IDs, an
 ## 9. Shared types
 
 ```typescript
-type ReviewAction = "APPROVE" | "EDIT_AND_APPROVE" | "REGENERATE" | "REJECT";
+type ReviewAction = "SUBMIT" | "EDIT" | "REQUEST_CHANGES" | "REGENERATE" | "REJECT" | "APPROVE";
 type PublishMethod = "MANUAL_COPY" | "LINKEDIN_OFFICIAL_API";
 type PredictionBasis = "DOMAIN_PRIOR" | "BLENDED" | "PERSONALIZED";
 

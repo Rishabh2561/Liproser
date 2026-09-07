@@ -37,6 +37,10 @@ def test_v01_application_api_contract(client):
         "/v1/content-ideas/{idea_id}",
         "/v1/content-ideas/{idea_id}/primary-draft",
         "/v1/posts/{post_id}",
+        "/v1/posts/{post_id}/submit-review",
+        "/v1/posts/{post_id}/reviews",
+        "/v1/posts/{post_id}/edits",
+        "/v1/posts/{post_id}/regenerations",
     }
     assert expected <= set(paths)
 

@@ -65,13 +65,29 @@ test("v0.2 voice onboarding requires owned samples and controlled taxonomy input
   assert.match(page, /Controlled taxonomy/);
 });
 
-test("v0.2B creates one evidence-aware draft without approval controls", () => {
+test("v0.2B creates one evidence-aware draft", () => {
   assert.match(page, /Turn one idea into one grounded draft/);
   assert.match(page, /Evidence ledger/);
   assert.match(page, /evidence_confirmed/);
   assert.match(page, /Generate primary draft/);
   assert.match(page, /LinkedIn-style draft preview/);
   assert.match(page, /Claim ledger/);
-  assert.match(page, /This revision remains DRAFT/);
-  assert.doesNotMatch(page, /Approve post/);
+});
+
+test("v0.2C preserves exact-revision human review authority", () => {
+  for (const expected of [
+    "Revision checks",
+    "Save changes as a new immutable revision",
+    "Submit revision for review",
+    "Approve exact revision",
+    "Request changes & regenerate",
+    "Reject with reason",
+    "Review history",
+    "claims_confirmed",
+  ]) {
+    assert.match(page, new RegExp(expected));
+  }
+  assert.match(page, /Only this exact revision is approved/);
+  assert.match(page, /Scheduling remains unavailable until v0\.3/);
+  assert.doesNotMatch(page, /auto.?approve/i);
 });

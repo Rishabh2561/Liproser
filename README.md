@@ -2,7 +2,7 @@
 
 Liproser is a personal-first AI system for improving a LinkedIn profile and building a repeatable, evidence-aware content workflow. It starts as the founder's private operating system; capabilities are generalized into SaaS features only after sustained personal use demonstrates value.
 
-> **Current status:** `v0.1` profile optimizer is complete. `v0.2A` voice onboarding and `v0.2B` one-idea/one-draft generation are implemented for local personal use; review workflow is next.
+> **Current status:** `v0.1` profile optimizer and `v0.2A–C` voice, drafting, and human review slices are implemented for local personal use. First-party memory and originality are next in `v0.2D`.
 
 ## What Liproser will do
 
@@ -120,6 +120,10 @@ The first content release slice adds immutable voice-profile versions with domai
 ## Implemented `v0.2B` slice
 
 The second content slice creates one controlled-pillar idea and one primary text draft. User-confirmed evidence is stored as a private ledger with optional source URLs and freshness dates. Provider output must classify supported claims versus opinions, link supported claims to evidence, preserve supplied numbers, and respect prohibited phrases; unsafe or unavailable output falls back to a deterministic draft. The revision stays `DRAFT` and has no approval controls until `v0.2C`.
+
+## Implemented `v0.2C` slice
+
+The review slice adds immutable human edits and regenerations, stored field-level edit deltas, structured regeneration feedback, deterministic claim/voice/readability/accessibility checks, and review history. A revision must explicitly enter review before the local owner can request changes, reject it with a reason, or approve that exact revision after confirming its claims. Editing an approved or in-review revision creates a new `DRAFT`; stale revisions and revisions with failed blocking checks cannot be approved. Scheduling and publication remain unavailable until `v0.3`.
 
 ## License
 

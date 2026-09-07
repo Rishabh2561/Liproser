@@ -8,6 +8,14 @@ This file is the authoritative implementation sequence. Personal releases are se
 
 For each vertical slice: define the user outcome and non-goals; add deterministic tests/synthetic fixtures; implement the smallest end-to-end behavior; run targeted and repository checks; inspect staged changes for private data, secrets, approval bypasses, and scope creep; commit and push only after checks pass; verify remote CI; then record personal-use evidence privately.
 
+## Status vocabulary and current checkpoint
+
+- **Implemented** means the slice exists end to end and its automated, migration, browser, repository, and remote-CI checks passed.
+- **Personally validated** means the founder has used it with real private data and recorded the release evidence outside Git.
+- **Product validated** means the eight-week, 24-planned-post `v1` gate and later design-partner gates passed.
+
+Current checkpoint: Foundation and `v0.1`, `v0.2A`, `v0.2B`, and `v0.2C` are implemented. Personal validation is still accumulating. `v0.2D` is the next implementation slice; later releases remain unstarted.
+
 ## Foundation — specification and runnable shell
 
 The documentation reconciliation, environment template, ignored private-data paths, synthetic fixtures, repository verifier, and read-only CI must pass first. Then create the Next.js web shell, FastAPI application API, migration tooling, PostgreSQL, filesystem storage adapter, and one bootstrap owner/workspace.

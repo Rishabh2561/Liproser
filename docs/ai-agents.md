@@ -117,6 +117,8 @@ Translates an already-computed statistical prediction into a bucket, calibrated 
 
 No fallback may approve, schedule, publish, silently weaken blocking checks, or use an unapproved source.
 
+In `v0.2C`, deterministic application routes—not agents—submit an exact revision for review and record edit, request-changes, regeneration, rejection, and approval events. Regeneration may call the Writer with bounded structured feedback, but its result always creates a new `DRAFT`. Only the local owner action can create `APPROVED`, and blocking claim or prohibited-phrase findings prevent it.
+
 ## Evaluation and release gates
 
 Use frozen synthetic or separately consented/de-identified datasets. Record dataset, schema, prompt, model, policy, rubric, and feature-pipeline versions with cost, latency, seed where applicable, and reviewer agreement.

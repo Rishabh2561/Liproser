@@ -238,6 +238,54 @@ class ClaimAssessment(Base):
     source_reference_ids: Mapped[list[str]] = mapped_column(JSON)
 
 
+class RevisionCheck(Base):
+    __tablename__ = "revision_checks"
+    __table_args__ = (UniqueConstraint("post_revision_id", "check_type"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    post_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"))
+    check_type: Mapped[str] = mapped_column(String(40))
+    severity: Mapped[str] = mapped_column(String(20))
+    passed: Mapped[bool] = mapped_column(Boolean)
+    message: Mapped[str] = mapped_column(Text)
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+    __table_args__ = (UniqueConstraint("revision_id", "action"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"))
+    revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"))
+    action: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    categories: Mapped[list[str]] = mapped_column(JSON, default=list)
+    claims_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    actor: Mapped[str] = mapped_column(String(80), default="LOCAL_OWNER")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EditDelta(Base):
+    __tablename__ = "edit_deltas"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"))
+    from_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"))
+    to_revision_id: Mapped[str] = mapped_column(
+        ForeignKey("post_revisions.id"), unique=True
+    )
+    operations: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AiBudgetPeriod(Base):
     __tablename__ = "ai_budget_periods"
     period: Mapped[str] = mapped_column(String(7), primary_key=True)

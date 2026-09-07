@@ -21,7 +21,8 @@ type Analysis = { total_score:number; rubric_version:string; suggestions:Suggest
 type VoiceProfile = { id:string; version:number; domain:string; target_audience:string; content_pillars:string[]; tone_preferences:string[]; prohibited_phrases:string[]; taxonomy_version:string; samples:{id:string;text:string}[] };
 type EvidenceDraft = { statement:string; source_url:string; freshness_date:string };
 type ContentIdea = { id:string; taxonomy_version:string; pillar:string; topic:string; angle:string; audience_intent:string; evidence:{id:string;statement:string;source_url?:string|null;freshness_date?:string|null}[] };
-type PrimaryDraft = { post_id:string; revision_id:string; state:"DRAFT"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"; generation_warning?:string|null; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION";source_reference_ids:string[]}[] };
+type ReviewCategory = "HOOK"|"TONE"|"CLARITY"|"CTA"|"LENGTH"|"EVIDENCE";
+type PrimaryDraft = { post_id:string; revision_id:string; revision_number:number; state:"DRAFT"|"IN_REVIEW"|"CHANGES_REQUESTED"|"REJECTED"|"APPROVED"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"|"human_edit"; generation_warning?:string|null; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION"|"CONFIRMED_PERSONAL";source_reference_ids:string[]}[]; checks:{id:string;check_type:string;severity:"BLOCKING"|"WARNING";passed:boolean;message:string}[]; reviews:{id:string;revision_id:string;revision_number:number;action:string;reason?:string|null;categories:string[];created_at:string}[] };
 
 const splitList = (value: string) => value.split(/[,\n]/).map(item=>item.trim()).filter(Boolean);
 
@@ -58,6 +59,13 @@ export default function Home() {
   const [contentIdea, setContentIdea] = useState<ContentIdea | null>(null);
   const [primaryDraft, setPrimaryDraft] = useState<PrimaryDraft | null>(null);
   const [contentMessage, setContentMessage] = useState("Create one idea before generating its primary draft.");
+  const [showDraftEditor, setShowDraftEditor] = useState(false);
+  const [editedDraft, setEditedDraft] = useState({hook:"",body:"",cta:""});
+  const [editClaimsConfirmed, setEditClaimsConfirmed] = useState(false);
+  const [approvalConfirmed, setApprovalConfirmed] = useState(false);
+  const [reviewFeedback, setReviewFeedback] = useState("");
+  const [reviewCategories, setReviewCategories] = useState<ReviewCategory[]>([]);
+  const [rejectionReason, setRejectionReason] = useState("");
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
@@ -233,8 +241,75 @@ export default function Home() {
     const response = await fetch(`${API}/v1/content-ideas/${contentIdea.id}/primary-draft`, {method:"POST"});
     const data = await response.json();
     if (!response.ok) return setContentMessage(data.detail ?? "The primary draft could not be generated.");
+    adoptDraft(data);
+    setContentMessage("Primary draft ready. Submit the exact revision when you are ready to review it.");
+  }
+
+  function adoptDraft(data: PrimaryDraft) {
     setPrimaryDraft(data);
-    setContentMessage("Primary draft ready. Review controls arrive in v0.2C; nothing is approved yet.");
+    setEditedDraft({hook:data.hook,body:data.body,cta:data.cta});
+    setShowDraftEditor(false);
+    setEditClaimsConfirmed(false);
+    setApprovalConfirmed(false);
+  }
+
+  async function submitDraftReview() {
+    if (!primaryDraft) return;
+    const response = await fetch(`${API}/v1/posts/${primaryDraft.post_id}/submit-review`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id})});
+    const data = await response.json();
+    if (!response.ok) return setContentMessage(data.detail ?? "The revision could not enter review.");
+    adoptDraft(data);
+    setContentMessage(`Revision ${data.revision_number} is in review. Approve, request regeneration, edit, or reject it.`);
+  }
+
+  async function saveDraftEdit() {
+    if (!primaryDraft) return;
+    if (!editClaimsConfirmed) return setContentMessage("Confirm that the edited text contains only claims you can support.");
+    const response = await fetch(`${API}/v1/posts/${primaryDraft.post_id}/edits`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id,...editedDraft,claims_confirmed:true})});
+    const data = await response.json();
+    if (!response.ok) return setContentMessage(data.detail ?? "The edited revision could not be saved.");
+    adoptDraft(data);
+    setContentMessage(`Revision ${data.revision_number} saved as a new draft. Earlier revisions remain unchanged.`);
+  }
+
+  function toggleReviewCategory(category: ReviewCategory) {
+    setReviewCategories(current=>current.includes(category)?current.filter(item=>item!==category):[...current,category]);
+  }
+
+  async function requestRegeneration() {
+    if (!primaryDraft) return;
+    if (!reviewFeedback.trim() || !reviewCategories.length) return setContentMessage("Choose a feedback category and explain the requested change.");
+    const requested = await fetch(`${API}/v1/posts/${primaryDraft.post_id}/reviews`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id,action:"REQUEST_CHANGES",reason:reviewFeedback,categories:reviewCategories})});
+    const requestData = await requested.json();
+    if (!requested.ok) return setContentMessage(requestData.detail ?? "The regeneration feedback could not be recorded.");
+    setContentMessage("Feedback recorded. Generating a new draft revision…");
+    const response = await fetch(`${API}/v1/posts/${primaryDraft.post_id}/regenerations`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id})});
+    const data = await response.json();
+    if (!response.ok) { adoptDraft(requestData); return setContentMessage(data.detail ?? "Feedback was saved, but regeneration did not complete."); }
+    adoptDraft(data);
+    setReviewFeedback("");
+    setReviewCategories([]);
+    setContentMessage(`Revision ${data.revision_number} generated from your structured feedback. It still requires review.`);
+  }
+
+  async function rejectDraft() {
+    if (!primaryDraft) return;
+    if (!rejectionReason.trim()) return setContentMessage("Add a rejection reason first.");
+    const response = await fetch(`${API}/v1/posts/${primaryDraft.post_id}/reviews`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id,action:"REJECT",reason:rejectionReason})});
+    const data = await response.json();
+    if (!response.ok) return setContentMessage(data.detail ?? "The rejection could not be recorded.");
+    adoptDraft(data);
+    setContentMessage("The post was rejected with its reason preserved. This post is now terminal.");
+  }
+
+  async function approveDraft() {
+    if (!primaryDraft) return;
+    if (!approvalConfirmed) return setContentMessage("Confirm the exact revision and its claims before approval.");
+    const response = await fetch(`${API}/v1/posts/${primaryDraft.post_id}/reviews`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id,action:"APPROVE",claims_confirmed:true})});
+    const data = await response.json();
+    if (!response.ok) return setContentMessage(data.detail ?? "The revision could not be approved.");
+    adoptDraft(data);
+    setContentMessage(`Revision ${data.revision_number} approved by you. Scheduling remains unavailable until v0.3.`);
   }
 
   return <div className="app-shell">
@@ -361,11 +436,21 @@ export default function Home() {
           </form>
           {contentIdea && <article className="idea-card"><div><span>{contentIdea.taxonomy_version}</span><span>{contentIdea.pillar}</span><span>Text</span></div><h3>{contentIdea.topic}</h3><p>{contentIdea.angle}</p><small>{contentIdea.evidence.length} confirmed evidence record{contentIdea.evidence.length === 1 ? "" : "s"}</small>{!primaryDraft && <button className="button accent" onClick={generatePrimaryDraft}>Generate primary draft ✦</button>}</article>}
           {primaryDraft && <div className="draft-workspace">
-            <div className="draft-meta"><div><span>DRAFT · REVISION 1</span><strong>{primaryDraft.pillar}</strong></div><div><span>{primaryDraft.generation_mode === "provider" ? `AI · ${primaryDraft.generation_model}` : "Safe fallback"}</span><strong>Not approved</strong></div></div>
+            <div className="draft-meta"><div><span>{primaryDraft.state.replaceAll("_"," ")} · REVISION {primaryDraft.revision_number}</span><strong>{primaryDraft.pillar}</strong></div><div><span>{primaryDraft.generation_mode === "provider" ? `AI · ${primaryDraft.generation_model}` : primaryDraft.generation_mode === "human_edit" ? "Human edit" : "Safe fallback"}</span><strong>{primaryDraft.state === "APPROVED" ? "Human approved" : primaryDraft.state === "REJECTED" ? "Rejected" : "Not approved"}</strong></div></div>
             {primaryDraft.generation_warning && <p className="draft-warning">{primaryDraft.generation_warning}</p>}
             <article className="linkedin-preview" aria-label="LinkedIn-style draft preview"><div className="preview-author"><span>R</span><div><strong>Your name</strong><small>Your headline · now</small></div><b>•••</b></div><p className="preview-content"><strong>{primaryDraft.hook}</strong>{`\n\n${primaryDraft.body}\n\n${primaryDraft.cta}`}</p><div className="preview-reactions"><span>○ ○</span><span>0 comments · 0 reposts</span></div></article>
             <div className="claim-ledger"><div><strong>Claim ledger</strong><span>{primaryDraft.claims.length} classified</span></div>{primaryDraft.claims.map(claim=><p key={claim.id}><span className={claim.kind.toLowerCase()}>{claim.kind}</span>{claim.claim_text}<small>{claim.source_reference_ids.length ? `${claim.source_reference_ids.length} evidence link` : "No factual source claimed"}</small></p>)}</div>
-            <p className="review-boundary">This revision remains DRAFT. Review, edit, regenerate, reject, and approve controls arrive in v0.2C.</p>
+            <div className="revision-checks"><div><strong>Revision checks</strong><span>Originality and diversity arrive in v0.2D</span></div>{primaryDraft.checks.map(check=><p key={check.id} className={check.passed?"passed":"failed"}><b>{check.passed?"✓":"!"}</b><span><strong>{check.check_type.replaceAll("_"," ")}</strong><small>{check.severity} · {check.message}</small></span></p>)}</div>
+            {showDraftEditor && <div className="draft-editor"><strong>Save changes as a new immutable revision</strong><label><span>Hook</span><textarea aria-label="Edit post hook" value={editedDraft.hook} onChange={event=>setEditedDraft({...editedDraft,hook:event.target.value})} rows={2}/></label><label><span>Body</span><textarea aria-label="Edit post body" value={editedDraft.body} onChange={event=>setEditedDraft({...editedDraft,body:event.target.value})} rows={7}/></label><label><span>CTA</span><textarea aria-label="Edit post CTA" value={editedDraft.cta} onChange={event=>setEditedDraft({...editedDraft,cta:event.target.value})} rows={2}/></label><label className="review-confirm"><input type="checkbox" checked={editClaimsConfirmed} onChange={event=>setEditClaimsConfirmed(event.target.checked)}/><span>I confirm every claim and numeric detail in this edited revision.</span></label><div className="review-buttons"><button className="button primary" onClick={saveDraftEdit}>Save new revision</button><button className="button outline" onClick={()=>setShowDraftEditor(false)}>Cancel edit</button></div></div>}
+            {!showDraftEditor && primaryDraft.state !== "REJECTED" && <div className="review-buttons"><button className="button outline" onClick={()=>{setEditedDraft({hook:primaryDraft.hook,body:primaryDraft.body,cta:primaryDraft.cta});setShowDraftEditor(true);}}>Edit as new revision</button>{primaryDraft.state === "DRAFT" && <button className="button primary" onClick={submitDraftReview}>Submit revision for review</button>}</div>}
+            {primaryDraft.state === "IN_REVIEW" && <div className="review-console">
+              <div className="approval-panel"><strong>Approve exact revision {primaryDraft.revision_number}</strong><label className="review-confirm"><input type="checkbox" checked={approvalConfirmed} onChange={event=>setApprovalConfirmed(event.target.checked)}/><span>I reviewed this exact revision and confirm its claims.</span></label><button className="button primary" onClick={approveDraft}>Approve exact revision</button></div>
+              <div className="regeneration-panel"><strong>Request regeneration</strong><div className="feedback-categories">{(["HOOK","TONE","CLARITY","CTA","LENGTH","EVIDENCE"] as ReviewCategory[]).map(category=><label key={category}><input type="checkbox" checked={reviewCategories.includes(category)} onChange={()=>toggleReviewCategory(category)}/><span>{category}</span></label>)}</div><textarea aria-label="Regeneration feedback" value={reviewFeedback} onChange={event=>setReviewFeedback(event.target.value)} rows={3} placeholder="Describe the specific change to make"/><button className="button accent" onClick={requestRegeneration}>Request changes & regenerate</button></div>
+              <div className="rejection-panel"><strong>Reject post</strong><textarea aria-label="Post rejection reason" value={rejectionReason} onChange={event=>setRejectionReason(event.target.value)} rows={3} placeholder="Why should this post not continue?"/><button className="button danger" onClick={rejectDraft}>Reject with reason</button></div>
+            </div>}
+            {primaryDraft.state === "APPROVED" && <p className="review-boundary approved-boundary">Approved by the local owner. Only this exact revision is approved; editing creates a new draft.</p>}
+            {primaryDraft.state === "REJECTED" && <p className="review-boundary rejected-boundary">Rejected with a recorded reason. This post cannot be edited, approved, scheduled, or published.</p>}
+            {primaryDraft.reviews.length > 0 && <div className="review-history"><strong>Review history</strong>{primaryDraft.reviews.map(event=><p key={event.id}><span>{event.action.replaceAll("_"," ")}</span><small>Revision {event.revision_number}{event.reason ? ` · ${event.reason}` : ""}</small></p>)}</div>}
           </div>}
         </>}
       </section>
