@@ -1,8 +1,8 @@
 """Add v0.4 analytics, experiments, feature snapshots, and predictions."""
 
+import sqlalchemy as sa
 from alembic import op
 from liproser.database import Base
-import sqlalchemy as sa
 
 revision = "0006_v04_analytics"
 down_revision = "0005_v03_calendar"
