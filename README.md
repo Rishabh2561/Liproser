@@ -2,7 +2,7 @@
 
 Liproser is a personal-first AI system for improving a LinkedIn profile and building a repeatable, evidence-aware content workflow. It starts as the founder's private operating system; capabilities are generalized into SaaS features only after sustained personal use demonstrates value.
 
-> **Current status:** `v0.1` profile optimizer complete for local personal use. `v0.2A` voice onboarding and controlled taxonomy are implemented; content generation has not started.
+> **Current status:** `v0.1` profile optimizer is complete. `v0.2A` voice onboarding and `v0.2B` one-idea/one-draft generation are implemented for local personal use; review workflow is next.
 
 ## What Liproser will do
 
@@ -116,6 +116,10 @@ The current implementation includes session-only hosted credentials, provider re
 ## Implemented `v0.2A` slice
 
 The first content release slice adds immutable voice-profile versions with domain, audience, content pillars, tone preferences, prohibited phrases, and three-to-five distinct user-owned writing samples. Saving a version also creates a deterministic controlled taxonomy snapshot. It does not yet generate posts, run semantic retrieval, or add pgvector; those follow as separate `v0.2` slices after this onboarding contract is validated.
+
+## Implemented `v0.2B` slice
+
+The second content slice creates one controlled-pillar idea and one primary text draft. User-confirmed evidence is stored as a private ledger with optional source URLs and freshness dates. Provider output must classify supported claims versus opinions, link supported claims to evidence, preserve supplied numbers, and respect prohibited phrases; unsafe or unavailable output falls back to a deterministic draft. The revision stays `DRAFT` and has no approval controls until `v0.2C`.
 
 ## License
 

@@ -136,7 +136,8 @@ All routes require server-resolved workspace scope, rate limits, request IDs, an
 | Release | Resources |
 |---|---|
 | `v0.2A` implemented | `POST /voice-profiles`, `GET /voice-profiles/current`, `GET /taxonomy/current` |
-| `v0.2B–D` | `/content-ideas`, `/posts`, `/post-revisions`, `/reviews`, `/sources`, `/claims`, `/memory/revisions` |
+| `v0.2B` implemented | `POST/GET /content-ideas`, `POST /content-ideas/{id}/primary-draft`, `GET /posts/{id}` with evidence and claim provenance |
+| `v0.2C–D` | `/post-revisions`, `/reviews`, `/memory/revisions` plus review and retrieval operations |
 | `v0.3` | `/calendars`, `/schedules`, `/publish-actions`, `/feedback` |
 | `v0.4` | `/metric-snapshots`, `/analytics`, `/predictions` |
 | Capability gated | `/integrations/linkedin`, `/integrations/linkedin/capabilities`, `/integrations/linkedin/syncs` |

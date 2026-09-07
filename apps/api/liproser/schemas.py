@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
@@ -159,4 +160,105 @@ class TaxonomyOutput(BaseModel):
     pillar_tags: list[str]
     audience_tags: list[str]
     topic_tags: list[str]
+    created_at: datetime
+
+
+class EvidenceInput(BaseModel):
+    statement: str = Field(min_length=10, max_length=2_000)
+    source_url: str | None = Field(default=None, max_length=2_000)
+    freshness_date: date | None = None
+
+    @field_validator("statement")
+    @classmethod
+    def strip_statement(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("source_url")
+    @classmethod
+    def validate_source_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        cleaned = value.strip()
+        parsed = urlparse(cleaned)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Source URL must use http or https")
+        return cleaned
+
+
+class ContentIdeaCreate(BaseModel):
+    pillar: str = Field(min_length=2, max_length=100)
+    topic: str = Field(min_length=5, max_length=300)
+    angle: str = Field(min_length=10, max_length=2_000)
+    audience_intent: str = Field(min_length=5, max_length=1_000)
+    format: Literal["TEXT"] = "TEXT"
+    evidence: list[EvidenceInput] = Field(default_factory=list, max_length=5)
+    evidence_confirmed: Literal[True]
+
+    @field_validator("pillar", "topic", "angle", "audience_intent")
+    @classmethod
+    def strip_idea_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class SourceReferenceOutput(BaseModel):
+    id: str
+    statement: str
+    source_url: str | None
+    freshness_date: date | None
+    source_type: Literal["USER_CONFIRMED"]
+
+
+class ContentIdeaOutput(BaseModel):
+    id: str
+    voice_profile_id: str
+    taxonomy_version: str
+    pillar: str
+    topic: str
+    angle: str
+    audience_intent: str
+    format: Literal["TEXT"]
+    evidence: list[SourceReferenceOutput]
+    created_at: datetime
+
+
+class GeneratedClaim(BaseModel):
+    text: str = Field(min_length=1, max_length=2_000)
+    kind: Literal["SUPPORTED", "OPINION"]
+    evidence_indices: list[int] = Field(default_factory=list, max_length=5)
+
+
+class GeneratedDraft(BaseModel):
+    hook: str = Field(min_length=1, max_length=600)
+    body: str = Field(min_length=1, max_length=8_000)
+    cta: str = Field(min_length=1, max_length=600)
+    claims: list[GeneratedClaim] = Field(min_length=1, max_length=30)
+
+
+class ClaimAssessmentOutput(BaseModel):
+    id: str
+    claim_text: str
+    kind: Literal["SUPPORTED", "OPINION"]
+    source_reference_ids: list[str]
+
+
+class PrimaryDraftOutput(BaseModel):
+    post_id: str
+    revision_id: str
+    state: Literal["DRAFT"]
+    revision_number: int
+    hook: str
+    body: str
+    cta: str
+    content: str
+    pillar: str
+    topic: str
+    format: Literal["TEXT"]
+    taxonomy_version: str
+    generation_provider: str
+    generation_model: str
+    generation_mode: Literal["provider", "deterministic_fallback"]
+    generation_warning: str | None
+    prompt_version: str
+    retrieved_revision_ids: list[str]
+    claims: list[ClaimAssessmentOutput]
     created_at: datetime

@@ -3,6 +3,8 @@ import json
 import httpx
 from liproser.config import Settings
 from liproser.providers import (
+    _primary_draft_schema,
+    _profile_schema,
     normalize_model,
     provider_failure_detail,
     provider_readiness,
@@ -48,6 +50,11 @@ def test_openai_display_names_normalize_to_api_model_ids():
     assert normalize_model("openai", "Terra") == "gpt-5.6-terra"
     assert normalize_model("openai", "GPT-5.6 Luna") == "gpt-5.6-luna"
     assert normalize_model("openai", "GPT 5.6 Sol") == "gpt-5.6-sol"
+
+
+def test_generation_schemas_keep_profile_and_primary_draft_contracts_distinct():
+    assert "suggestions" in _profile_schema()["properties"]
+    assert set(_primary_draft_schema()["required"]) == {"hook", "body", "cta", "claims"}
 
 
 def test_provider_failures_are_actionable_without_exposing_response_bodies():

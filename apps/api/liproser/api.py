@@ -11,15 +11,25 @@ from sqlalchemy.orm import Session
 
 from .budget import BudgetExceededError, reconcile, reserve
 from .config import Settings, get_settings
-from .content_service import audience_tags, canonical_tag
+from .content_service import (
+    audience_tags,
+    canonical_tag,
+    deterministic_primary_draft,
+    generated_draft_is_traceable,
+)
 from .database import (
     BOOTSTRAP_WORKSPACE_ID,
     AiBudgetPeriod,
+    ClaimAssessment,
+    ContentIdea,
+    Post,
+    PostRevision,
     Profile,
     ProfileAnalysis,
     ProfileImport,
     ProfileSuggestion,
     ProviderConfiguration,
+    SourceReference,
     TaxonomySnapshot,
     VoiceProfile,
     VoiceSample,
@@ -33,6 +43,7 @@ from .profile_service import (
     score_sections,
 )
 from .providers import (
+    generate_primary_draft,
     generate_profile_rewrites,
     normalize_model,
     provider_failure_detail,
@@ -42,15 +53,21 @@ from .providers import (
 from .runtime_secrets import clear_session_secret, set_session_secret
 from .schemas import (
     AnalysisOutput,
+    ClaimAssessmentOutput,
     ConfirmImportRequest,
+    ContentIdeaCreate,
+    ContentIdeaOutput,
     DecisionRequest,
+    GeneratedDraft,
     GeneratedSuggestion,
     ImportResponse,
     ManualImportRequest,
+    PrimaryDraftOutput,
     ProfileSections,
     ProviderCheckRequest,
     ProviderCheckResponse,
     ProviderSecretRequest,
+    SourceReferenceOutput,
     SuggestionOutput,
     TaxonomyOutput,
     VoiceProfileCreate,
@@ -88,6 +105,72 @@ def voice_profile_output(db: Session, profile: VoiceProfile) -> VoiceProfileOutp
             for sample in samples
         ],
         created_at=profile.created_at,
+    )
+
+
+def content_idea_output(db: Session, idea: ContentIdea) -> ContentIdeaOutput:
+    evidence = db.scalars(
+        select(SourceReference)
+        .where(SourceReference.content_idea_id == idea.id)
+        .order_by(SourceReference.created_at, SourceReference.id)
+    ).all()
+    return ContentIdeaOutput(
+        id=idea.id,
+        voice_profile_id=idea.voice_profile_id,
+        taxonomy_version=idea.taxonomy_version,
+        pillar=idea.pillar,
+        topic=idea.topic,
+        angle=idea.angle,
+        audience_intent=idea.audience_intent,
+        format="TEXT",
+        evidence=[
+            SourceReferenceOutput(
+                id=item.id,
+                statement=item.statement,
+                source_url=item.source_url,
+                freshness_date=item.freshness_date,
+                source_type="USER_CONFIRMED",
+            )
+            for item in evidence
+        ],
+        created_at=idea.created_at,
+    )
+
+
+def primary_draft_output(db: Session, post: Post, revision: PostRevision) -> PrimaryDraftOutput:
+    idea = db.get(ContentIdea, post.content_idea_id)
+    claims = db.scalars(
+        select(ClaimAssessment).where(ClaimAssessment.post_revision_id == revision.id)
+    ).all()
+    return PrimaryDraftOutput(
+        post_id=post.id,
+        revision_id=revision.id,
+        state="DRAFT",
+        revision_number=revision.revision_number,
+        hook=revision.hook,
+        body=revision.body,
+        cta=revision.cta,
+        content=revision.content,
+        pillar=idea.pillar,
+        topic=idea.topic,
+        format="TEXT",
+        taxonomy_version=revision.taxonomy_version,
+        generation_provider=revision.generation_provider,
+        generation_model=revision.generation_model,
+        generation_mode=revision.generation_mode,
+        generation_warning=revision.generation_warning,
+        prompt_version=revision.prompt_version,
+        retrieved_revision_ids=revision.retrieved_revision_ids,
+        claims=[
+            ClaimAssessmentOutput(
+                id=claim.id,
+                claim_text=claim.claim_text,
+                kind=claim.kind,
+                source_reference_ids=claim.source_reference_ids,
+            )
+            for claim in claims
+        ],
+        created_at=revision.created_at,
     )
 
 
@@ -191,6 +274,232 @@ def current_taxonomy(db: Session = Depends(get_db)):
         topic_tags=taxonomy.topic_tags,
         created_at=taxonomy.created_at,
     )
+
+
+@router.post("/content-ideas", response_model=ContentIdeaOutput, status_code=201)
+def create_content_idea(body: ContentIdeaCreate, db: Session = Depends(get_db)):
+    voice = db.scalars(
+        select(VoiceProfile)
+        .where(VoiceProfile.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+        .order_by(VoiceProfile.version.desc())
+        .limit(1)
+    ).first()
+    if not voice:
+        raise HTTPException(409, "Configure a voice profile before creating an idea")
+    pillar = next(
+        (item for item in voice.content_pillars if item.casefold() == body.pillar.casefold()),
+        None,
+    )
+    if not pillar:
+        raise HTTPException(422, "Choose a pillar from the current voice profile")
+    idea = ContentIdea(
+        id=str(uuid4()),
+        voice_profile_id=voice.id,
+        taxonomy_version=voice.taxonomy_version,
+        pillar=pillar,
+        topic=body.topic,
+        angle=body.angle,
+        audience_intent=body.audience_intent,
+        format="TEXT",
+    )
+    db.add(idea)
+    db.flush()
+    for item in body.evidence:
+        db.add(
+            SourceReference(
+                id=str(uuid4()),
+                content_idea_id=idea.id,
+                statement=item.statement,
+                source_url=item.source_url,
+                freshness_date=item.freshness_date.isoformat() if item.freshness_date else None,
+                source_type="USER_CONFIRMED",
+            )
+        )
+    db.commit()
+    db.refresh(idea)
+    return content_idea_output(db, idea)
+
+
+@router.get("/content-ideas/{idea_id}", response_model=ContentIdeaOutput)
+def get_content_idea(idea_id: str, db: Session = Depends(get_db)):
+    idea = db.get(ContentIdea, idea_id)
+    if not idea or idea.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Content idea not found")
+    return content_idea_output(db, idea)
+
+
+@router.post(
+    "/content-ideas/{idea_id}/primary-draft",
+    response_model=PrimaryDraftOutput,
+    status_code=201,
+)
+def create_primary_draft(
+    idea_id: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    idea = db.get(ContentIdea, idea_id)
+    if not idea or idea.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Content idea not found")
+    if db.scalar(select(Post.id).where(Post.content_idea_id == idea.id)):
+        raise HTTPException(409, "This idea already has its one primary draft")
+    voice = db.get(VoiceProfile, idea.voice_profile_id)
+    samples = db.scalars(
+        select(VoiceSample)
+        .where(VoiceSample.voice_profile_id == voice.id)
+        .order_by(VoiceSample.position)
+    ).all()
+    evidence = db.scalars(
+        select(SourceReference)
+        .where(SourceReference.content_idea_id == idea.id)
+        .order_by(SourceReference.created_at, SourceReference.id)
+    ).all()
+    generated = deterministic_primary_draft(idea.topic, idea.angle)
+    generation = {
+        "provider": "deterministic",
+        "model": "primary-draft-safe@1",
+        "mode": "deterministic_fallback",
+        "warning": "No ready AI provider was available; a safe structured draft was used.",
+    }
+    configured = db.get(ProviderConfiguration, 1)
+    reservation = None
+    if configured:
+        generation.update(provider=configured.provider, model=configured.model)
+    provider_ready = bool(configured and configured.ready)
+    if configured and configured.provider in {"openai", "anthropic"}:
+        provider_ready = provider_ready and provider_secret_source(settings, configured.provider) != "missing"
+    if configured and provider_ready and configured.provider not in {"fake", "unconfigured"}:
+        try:
+            if configured.provider in {"openai", "anthropic"}:
+                estimate = min(0.25, settings.ai_max_request_cost_usd)
+                reservation = reserve(
+                    db, configured.provider, estimate, settings.ai_monthly_budget_usd
+                )
+            raw, _usage = generate_primary_draft(
+                settings,
+                configured.provider,
+                configured.model,
+                {
+                    "domain": voice.domain,
+                    "target_audience": voice.target_audience,
+                    "tone_preferences": voice.tone_preferences,
+                    "prohibited_phrases": voice.prohibited_phrases,
+                    "user_owned_samples": [sample.text for sample in samples],
+                },
+                {
+                    "pillar": idea.pillar,
+                    "topic": idea.topic,
+                    "angle": idea.angle,
+                    "audience_intent": idea.audience_intent,
+                    "format": idea.format,
+                },
+                [
+                    {
+                        "index": index,
+                        "statement": item.statement,
+                        "source_url": item.source_url,
+                        "freshness_date": item.freshness_date,
+                    }
+                    for index, item in enumerate(evidence, start=1)
+                ],
+            )
+            candidate = GeneratedDraft.model_validate(raw)
+            candidate_data = candidate.model_dump()
+            allowed_context = "\n".join(
+                (
+                    voice.domain,
+                    voice.target_audience,
+                    idea.pillar,
+                    idea.topic,
+                    idea.angle,
+                    idea.audience_intent,
+                )
+            )
+            content = "\n\n".join((candidate.hook, candidate.body, candidate.cta))
+            prohibited = any(
+                phrase.casefold() in content.casefold() for phrase in voice.prohibited_phrases
+            )
+            traceable = generated_draft_is_traceable(
+                candidate.hook,
+                candidate.body,
+                candidate.cta,
+                [claim.model_dump() for claim in candidate.claims],
+                [item.statement for item in evidence],
+                allowed_context,
+            )
+            if prohibited or not traceable:
+                generation["warning"] = (
+                    "The AI draft failed evidence or voice-boundary checks; a safe draft was used."
+                )
+            else:
+                generated = candidate_data
+                generation.update(mode="provider", warning=None)
+            if reservation:
+                reconcile(db, reservation.id, reservation.estimated_usd)
+        except BudgetExceededError:
+            generation["warning"] = "AI budget exhausted; a safe structured draft was used."
+        except Exception as exc:
+            if reservation and reservation.status == "RESERVED":
+                reconcile(db, reservation.id, 0)
+            generation["warning"] = provider_failure_detail(configured.provider, exc)
+    elif configured and configured.provider == "fake":
+        generation["warning"] = "The fake provider uses the safe deterministic draft."
+
+    post = Post(id=str(uuid4()), content_idea_id=idea.id, state="DRAFT")
+    db.add(post)
+    db.flush()
+    content = "\n\n".join((generated["hook"], generated["body"], generated["cta"]))
+    revision = PostRevision(
+        id=str(uuid4()),
+        post_id=post.id,
+        revision_number=1,
+        hook=generated["hook"],
+        body=generated["body"],
+        cta=generated["cta"],
+        content=content,
+        generation_provider=generation["provider"],
+        generation_model=generation["model"],
+        generation_mode=generation["mode"],
+        generation_warning=generation["warning"],
+        prompt_version="primary-draft@1",
+        taxonomy_version=idea.taxonomy_version,
+        retrieved_revision_ids=[],
+    )
+    db.add(revision)
+    db.flush()
+    for claim in generated["claims"]:
+        source_ids = [
+            evidence[index - 1].id
+            for index in claim.get("evidence_indices", [])
+            if 1 <= index <= len(evidence)
+        ]
+        db.add(
+            ClaimAssessment(
+                id=str(uuid4()),
+                post_revision_id=revision.id,
+                claim_text=claim["text"],
+                kind=claim["kind"],
+                source_reference_ids=source_ids,
+            )
+        )
+    db.commit()
+    db.refresh(post)
+    db.refresh(revision)
+    return primary_draft_output(db, post, revision)
+
+
+@router.get("/posts/{post_id}", response_model=PrimaryDraftOutput)
+def get_post(post_id: str, db: Session = Depends(get_db)):
+    post = db.get(Post, post_id)
+    if not post or post.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Post not found")
+    revision = db.scalars(
+        select(PostRevision)
+        .where(PostRevision.post_id == post.id)
+        .order_by(PostRevision.revision_number.desc())
+        .limit(1)
+    ).first()
+    return primary_draft_output(db, post, revision)
 
 
 @router.get("/setup")

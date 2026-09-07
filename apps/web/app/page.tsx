@@ -19,6 +19,9 @@ type PendingDecision = { suggestionId: string; action: "EDIT_AND_ACCEPT" | "REJE
 type Setup = { provider:string; model:string; provider_configured:boolean; credential_sources:Record<string,string> };
 type Analysis = { total_score:number; rubric_version:string; suggestions:Suggestion[]; generation_provider:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"; generation_warning?:string|null };
 type VoiceProfile = { id:string; version:number; domain:string; target_audience:string; content_pillars:string[]; tone_preferences:string[]; prohibited_phrases:string[]; taxonomy_version:string; samples:{id:string;text:string}[] };
+type EvidenceDraft = { statement:string; source_url:string; freshness_date:string };
+type ContentIdea = { id:string; taxonomy_version:string; pillar:string; topic:string; angle:string; audience_intent:string; evidence:{id:string;statement:string;source_url?:string|null;freshness_date?:string|null}[] };
+type PrimaryDraft = { post_id:string; revision_id:string; state:"DRAFT"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"; generation_warning?:string|null; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION";source_reference_ids:string[]}[] };
 
 const splitList = (value: string) => value.split(/[,\n]/).map(item=>item.trim()).filter(Boolean);
 
@@ -46,6 +49,15 @@ export default function Home() {
   const [voiceOwned, setVoiceOwned] = useState(false);
   const [voiceProfile, setVoiceProfile] = useState<VoiceProfile | null>(null);
   const [voiceMessage, setVoiceMessage] = useState("Configure your voice before generating content.");
+  const [ideaPillar, setIdeaPillar] = useState("");
+  const [ideaTopic, setIdeaTopic] = useState("");
+  const [ideaAngle, setIdeaAngle] = useState("");
+  const [ideaIntent, setIdeaIntent] = useState("");
+  const [ideaEvidence, setIdeaEvidence] = useState<EvidenceDraft[]>([{statement:"",source_url:"",freshness_date:""}]);
+  const [evidenceConfirmed, setEvidenceConfirmed] = useState(false);
+  const [contentIdea, setContentIdea] = useState<ContentIdea | null>(null);
+  const [primaryDraft, setPrimaryDraft] = useState<PrimaryDraft | null>(null);
+  const [contentMessage, setContentMessage] = useState("Create one idea before generating its primary draft.");
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
@@ -68,6 +80,7 @@ export default function Home() {
       setVoiceAvoid(data.prohibited_phrases.join(", "));
       setVoiceSamples(data.samples.map(sample=>sample.text));
       setVoiceOwned(true);
+      setIdeaPillar(data.content_pillars[0] ?? "");
       setVoiceMessage(`Voice profile v${data.version} is ready.`);
     }).catch(()=>undefined);
   }, []);
@@ -188,7 +201,40 @@ export default function Home() {
     if (!response.ok) return setVoiceMessage("Check the required fields: domain, audience, pillars, tone, and 3–5 distinct samples of at least 20 characters.");
     const data: VoiceProfile = await response.json();
     setVoiceProfile(data);
+    setIdeaPillar(data.content_pillars[0] ?? "");
     setVoiceMessage(`Voice profile v${data.version} saved with ${data.taxonomy_version}.`);
+  }
+
+  async function saveContentIdea(event: FormEvent) {
+    event.preventDefault();
+    if (!voiceProfile) return setContentMessage("Save a voice profile first.");
+    if (!evidenceConfirmed) return setContentMessage("Confirm that the supplied evidence is accurate.");
+    setContentMessage("Saving one tagged idea and its evidence ledger…");
+    const evidence = ideaEvidence.filter(item=>item.statement.trim()).map(item=>({
+      statement:item.statement.trim(),
+      source_url:item.source_url.trim() || null,
+      freshness_date:item.freshness_date || null,
+    }));
+    const response = await fetch(`${API}/v1/content-ideas`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({pillar:ideaPillar,topic:ideaTopic,angle:ideaAngle,audience_intent:ideaIntent,format:"TEXT",evidence,evidence_confirmed:true}),
+    });
+    if (!response.ok) return setContentMessage("Check the pillar, topic, angle, audience intent, and evidence fields.");
+    const data: ContentIdea = await response.json();
+    setContentIdea(data);
+    setPrimaryDraft(null);
+    setContentMessage("Idea saved. Generate its single primary draft when ready.");
+  }
+
+  async function generatePrimaryDraft() {
+    if (!contentIdea) return;
+    setContentMessage("Generating one primary draft with evidence checks…");
+    const response = await fetch(`${API}/v1/content-ideas/${contentIdea.id}/primary-draft`, {method:"POST"});
+    const data = await response.json();
+    if (!response.ok) return setContentMessage(data.detail ?? "The primary draft could not be generated.");
+    setPrimaryDraft(data);
+    setContentMessage("Primary draft ready. Review controls arrive in v0.2C; nothing is approved yet.");
   }
 
   return <div className="app-shell">
@@ -291,6 +337,37 @@ export default function Home() {
           <div className="voice-actions"><button className="button primary" type="submit">Save voice profile</button><p role="status">{voiceMessage}</p></div>
           {voiceProfile && <div className="taxonomy-preview"><strong>Controlled taxonomy</strong><span>Domain · {voiceProfile.domain}</span>{voiceProfile.content_pillars.map(pillar=><span key={pillar}>Pillar · {pillar}</span>)}</div>}
         </form>
+      </section>
+
+      <section className="content-studio" id="create">
+        <div className="studio-heading"><div><p className="eyebrow">CONTENT STUDIO · v0.2B</p><h2>Turn one idea into one grounded draft.</h2><p>Choose a controlled pillar, state the intended takeaway, and attach only evidence you have confirmed. Liproser creates no variants unless you ask in a later review step.</p></div><span className="draft-limit">1 idea → 1 primary draft</span></div>
+        {!voiceProfile ? <div className="studio-locked"><strong>Voice setup required</strong><p>Save the v0.2A voice profile above before creating content.</p></div> : <>
+          <form className="idea-form" onSubmit={saveContentIdea}>
+            <div className="idea-grid">
+              <label><span>Content pillar</span><select aria-label="Idea content pillar" value={ideaPillar} onChange={event=>setIdeaPillar(event.target.value)}>{voiceProfile.content_pillars.map(pillar=><option key={pillar}>{pillar}</option>)}</select></label>
+              <label><span>Post topic</span><input aria-label="Post topic" value={ideaTopic} onChange={event=>setIdeaTopic(event.target.value)} placeholder="Designing explicit retry contracts" required /></label>
+              <label className="idea-wide"><span>Core angle or takeaway</span><textarea aria-label="Core angle or takeaway" value={ideaAngle} onChange={event=>setIdeaAngle(event.target.value)} rows={3} placeholder="What should the reader understand or do differently?" required /></label>
+              <label className="idea-wide"><span>Audience intent</span><input aria-label="Audience intent" value={ideaIntent} onChange={event=>setIdeaIntent(event.target.value)} placeholder="Help backend engineers review retry behavior before deployment" required /></label>
+            </div>
+            <div className="evidence-heading"><div><strong>Evidence ledger</strong><p>Optional facts, one record at a time. Sources add traceability; public text is never used as a voice sample.</p></div>{ideaEvidence.length < 5 && <button type="button" onClick={()=>setIdeaEvidence([...ideaEvidence,{statement:"",source_url:"",freshness_date:""}])}>+ Add evidence</button>}</div>
+            <div className="evidence-list">{ideaEvidence.map((item,index)=><div className="evidence-row" key={index}>
+              <label><span>Confirmed statement {index+1}</span><textarea aria-label={`Evidence statement ${index+1}`} value={item.statement} onChange={event=>setIdeaEvidence(ideaEvidence.map((value,position)=>position===index?{...value,statement:event.target.value}:value))} rows={2} placeholder="Paste the exact fact or result you can support" /></label>
+              <label><span>Source URL <small>optional</small></span><input aria-label={`Evidence source URL ${index+1}`} value={item.source_url} onChange={event=>setIdeaEvidence(ideaEvidence.map((value,position)=>position===index?{...value,source_url:event.target.value}:value))} placeholder="https://…" /></label>
+              <label><span>Freshness date <small>optional</small></span><input type="date" aria-label={`Evidence freshness date ${index+1}`} value={item.freshness_date} onChange={event=>setIdeaEvidence(ideaEvidence.map((value,position)=>position===index?{...value,freshness_date:event.target.value}:value))} /></label>
+              {ideaEvidence.length > 1 && <button type="button" aria-label={`Remove evidence ${index+1}`} onClick={()=>setIdeaEvidence(ideaEvidence.filter((_,position)=>position!==index))}>Remove</button>}
+            </div>)}</div>
+            <label className="evidence-check"><input type="checkbox" checked={evidenceConfirmed} onChange={event=>setEvidenceConfirmed(event.target.checked)} /><span>I confirm the evidence and topic details are accurate. Unsupported claims must not be generated.</span></label>
+            <div className="studio-actions"><button className="button primary" type="submit">Save one content idea</button><p role="status">{contentMessage}</p></div>
+          </form>
+          {contentIdea && <article className="idea-card"><div><span>{contentIdea.taxonomy_version}</span><span>{contentIdea.pillar}</span><span>Text</span></div><h3>{contentIdea.topic}</h3><p>{contentIdea.angle}</p><small>{contentIdea.evidence.length} confirmed evidence record{contentIdea.evidence.length === 1 ? "" : "s"}</small>{!primaryDraft && <button className="button accent" onClick={generatePrimaryDraft}>Generate primary draft ✦</button>}</article>}
+          {primaryDraft && <div className="draft-workspace">
+            <div className="draft-meta"><div><span>DRAFT · REVISION 1</span><strong>{primaryDraft.pillar}</strong></div><div><span>{primaryDraft.generation_mode === "provider" ? `AI · ${primaryDraft.generation_model}` : "Safe fallback"}</span><strong>Not approved</strong></div></div>
+            {primaryDraft.generation_warning && <p className="draft-warning">{primaryDraft.generation_warning}</p>}
+            <article className="linkedin-preview" aria-label="LinkedIn-style draft preview"><div className="preview-author"><span>R</span><div><strong>Your name</strong><small>Your headline · now</small></div><b>•••</b></div><p className="preview-content"><strong>{primaryDraft.hook}</strong>{`\n\n${primaryDraft.body}\n\n${primaryDraft.cta}`}</p><div className="preview-reactions"><span>○ ○</span><span>0 comments · 0 reposts</span></div></article>
+            <div className="claim-ledger"><div><strong>Claim ledger</strong><span>{primaryDraft.claims.length} classified</span></div>{primaryDraft.claims.map(claim=><p key={claim.id}><span className={claim.kind.toLowerCase()}>{claim.kind}</span>{claim.claim_text}<small>{claim.source_reference_ids.length ? `${claim.source_reference_ids.length} evidence link` : "No factual source claimed"}</small></p>)}</div>
+            <p className="review-boundary">This revision remains DRAFT. Review, edit, regenerate, reject, and approve controls arrive in v0.2C.</p>
+          </div>}
+        </>}
       </section>
 
       <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.2 in progress · Data stays local</small></footer>

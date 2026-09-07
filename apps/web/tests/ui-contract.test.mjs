@@ -64,3 +64,14 @@ test("v0.2 voice onboarding requires owned samples and controlled taxonomy input
   assert.match(page, /samples_are_user_owned/);
   assert.match(page, /Controlled taxonomy/);
 });
+
+test("v0.2B creates one evidence-aware draft without approval controls", () => {
+  assert.match(page, /Turn one idea into one grounded draft/);
+  assert.match(page, /Evidence ledger/);
+  assert.match(page, /evidence_confirmed/);
+  assert.match(page, /Generate primary draft/);
+  assert.match(page, /LinkedIn-style draft preview/);
+  assert.match(page, /Claim ledger/);
+  assert.match(page, /This revision remains DRAFT/);
+  assert.doesNotMatch(page, /Approve post/);
+});

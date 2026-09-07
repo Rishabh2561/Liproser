@@ -162,6 +162,82 @@ class TaxonomySnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ContentIdea(Base):
+    __tablename__ = "content_ideas"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    voice_profile_id: Mapped[str] = mapped_column(ForeignKey("voice_profiles.id"))
+    taxonomy_version: Mapped[str] = mapped_column(String(40))
+    pillar: Mapped[str] = mapped_column(String(100))
+    topic: Mapped[str] = mapped_column(String(300))
+    angle: Mapped[str] = mapped_column(Text)
+    audience_intent: Mapped[str] = mapped_column(Text)
+    format: Mapped[str] = mapped_column(String(24), default="TEXT")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SourceReference(Base):
+    __tablename__ = "source_references"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    content_idea_id: Mapped[str] = mapped_column(ForeignKey("content_ideas.id"))
+    statement: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    freshness_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(32), default="USER_CONFIRMED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Post(Base):
+    __tablename__ = "posts"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    content_idea_id: Mapped[str] = mapped_column(ForeignKey("content_ideas.id"), unique=True)
+    state: Mapped[str] = mapped_column(String(32), default="DRAFT")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PostRevision(Base):
+    __tablename__ = "post_revisions"
+    __table_args__ = (UniqueConstraint("post_id", "revision_number"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    post_id: Mapped[str] = mapped_column(ForeignKey("posts.id"))
+    revision_number: Mapped[int] = mapped_column(Integer, default=1)
+    hook: Mapped[str] = mapped_column(Text)
+    body: Mapped[str] = mapped_column(Text)
+    cta: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text)
+    generation_provider: Mapped[str] = mapped_column(String(32))
+    generation_model: Mapped[str] = mapped_column(String(200))
+    generation_mode: Mapped[str] = mapped_column(String(32))
+    generation_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(40), default="primary-draft@1")
+    taxonomy_version: Mapped[str] = mapped_column(String(40))
+    retrieved_revision_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ClaimAssessment(Base):
+    __tablename__ = "claim_assessments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID
+    )
+    post_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"))
+    claim_text: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(32))
+    source_reference_ids: Mapped[list[str]] = mapped_column(JSON)
+
+
 class AiBudgetPeriod(Base):
     __tablename__ = "ai_budget_periods"
     period: Mapped[str] = mapped_column(String(7), primary_key=True)
