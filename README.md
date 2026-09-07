@@ -2,7 +2,7 @@
 
 Liproser is a personal-first AI system for improving a LinkedIn profile and building a repeatable, evidence-aware content workflow. It starts as the founder's private operating system; capabilities are generalized into SaaS features only after sustained personal use demonstrates value.
 
-> **Current status:** `v0.1` profile optimizer and `v0.2A–C` voice, drafting, and human review slices are implemented for local personal use. First-party memory and originality are next in `v0.2D`.
+> **Current status:** `v0.1` and all `v0.2A–D` slices are implemented for local personal use: profile optimization, voice setup, grounded drafting, human review, and eligible first-party memory. Calendar/reminder work is next in `v0.3`.
 
 ## What Liproser will do
 
@@ -115,7 +115,7 @@ The current implementation includes session-only hosted credentials, provider re
 
 ## Implemented `v0.2A` slice
 
-The first content release slice adds immutable voice-profile versions with domain, audience, content pillars, tone preferences, prohibited phrases, and three-to-five distinct user-owned writing samples. Saving a version also creates a deterministic controlled taxonomy snapshot. It does not yet generate posts, run semantic retrieval, or add pgvector; those follow as separate `v0.2` slices after this onboarding contract is validated.
+The first content release slice adds immutable voice-profile versions with domain, audience, content pillars, tone preferences, prohibited phrases, and three-to-five distinct user-owned writing samples. Saving a version also creates a deterministic controlled taxonomy snapshot. Drafting and retrieval are implemented by the later `v0.2B–D` slices below.
 
 ## Implemented `v0.2B` slice
 
@@ -124,6 +124,10 @@ The second content slice creates one controlled-pillar idea and one primary text
 ## Implemented `v0.2C` slice
 
 The review slice adds immutable human edits and regenerations, stored field-level edit deltas, structured regeneration feedback, deterministic claim/voice/readability/accessibility checks, and review history. A revision must explicitly enter review before the local owner can request changes, reject it with a reason, or approve that exact revision after confirming its claims. Editing an approved or in-review revision creates a new `DRAFT`; stale revisions and revisions with failed blocking checks cannot be approved. Scheduling and publication remain unavailable until `v0.3`.
+
+## Implemented `v0.2D` slice
+
+The memory slice stores a versioned local hash embedding for an exact approved revision in PostgreSQL `pgvector`, with a JSON-compatible SQLite adapter for tests and lightweight local development. Retrieval first filters workspace, approval validity, latest revision, state, and taxonomy, then ranks eligible posts and records revision IDs, similarity scores, taxonomy versions, and embedding versions on every generated revision. The writer receives structural features rather than reusable post text. Originality is a blocking full-corpus comparison; exact hook repetition is surfaced as a diversity warning. The Library screen shows only currently eligible first-party revisions, and editing an approved unpublished revision removes it immediately. No third-party post ingestion or scraping is included.
 
 ## License
 

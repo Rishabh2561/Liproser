@@ -14,7 +14,7 @@ For each vertical slice: define the user outcome and non-goals; add deterministi
 - **Personally validated** means the founder has used it with real private data and recorded the release evidence outside Git.
 - **Product validated** means the eight-week, 24-planned-post `v1` gate and later design-partner gates passed.
 
-Current checkpoint: Foundation and `v0.1`, `v0.2A`, `v0.2B`, and `v0.2C` are implemented. Personal validation is still accumulating. `v0.2D` is the next implementation slice; later releases remain unstarted.
+Current checkpoint: Foundation and `v0.1`, `v0.2A`, `v0.2B`, `v0.2C`, and `v0.2D` are implemented. Personal validation is still accumulating. `v0.3` is next; later releases remain unstarted.
 
 ## Foundation — specification and runnable shell
 

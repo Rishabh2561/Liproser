@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./styles.css";
+import "./memory.css";
 
 export const metadata: Metadata = {
   title: "Liproser · Profile Lab",

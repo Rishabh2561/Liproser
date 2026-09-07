@@ -44,7 +44,7 @@ def submit(client, draft):
 
 def test_approval_requires_exact_current_revision_and_human_confirmation(client):
     draft = create_draft(client)
-    assert len(draft["checks"]) == 4
+    assert len(draft["checks"]) == 6
     approval = {
         "revision_id": draft["revision_id"],
         "action": "APPROVE",
@@ -189,4 +189,4 @@ def test_legacy_draft_checks_are_backfilled_before_review(client):
         db.commit()
     response = submit(client, draft)
     assert response.status_code == 200
-    assert len(response.json()["checks"]) == 4
+    assert len(response.json()["checks"]) == 6

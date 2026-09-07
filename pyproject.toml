@@ -16,6 +16,7 @@ dependencies = [
   "python-multipart==0.0.20",
   "pypdf==6.0.0",
   "httpx==0.28.1",
+  "pgvector==0.4.1",
 ]
 
 [project.optional-dependencies]

@@ -91,3 +91,13 @@ test("v0.2C preserves exact-revision human review authority", () => {
   assert.match(page, /Scheduling remains unavailable until v0\.3/);
   assert.doesNotMatch(page, /auto.?approve/i);
 });
+
+test("v0.2D exposes eligible first-party memory and retrieval provenance", () => {
+  assert.match(page, /FIRST-PARTY MEMORY · v0\.2D/);
+  assert.match(page, /Only the exact approved revision appears here/);
+  assert.match(page, /First-party references/);
+  assert.match(page, /Structure only · never copied/);
+  assert.match(page, /originality, and diversity/);
+  assert.match(page, /\/v1\/memory\/revisions/);
+  assert.doesNotMatch(page, /scrape|swipe file/i);
+});

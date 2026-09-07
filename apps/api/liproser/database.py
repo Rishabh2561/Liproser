@@ -4,6 +4,7 @@ from collections.abc import Generator
 from datetime import UTC, datetime
 from typing import Any
 
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    TypeDecorator,
     UniqueConstraint,
     create_engine,
 )
@@ -30,6 +32,21 @@ def utcnow() -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+EMBEDDING_DIMENSIONS = 64
+
+
+class EmbeddingVector(TypeDecorator):
+    """Use pgvector in PostgreSQL and JSON in the local SQLite test adapter."""
+
+    impl = JSON
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(VECTOR(EMBEDDING_DIMENSIONS))
+        return dialect.type_descriptor(JSON())
 
 
 class Workspace(Base):
@@ -286,6 +303,50 @@ class EditDelta(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RevisionMemoryEligibility(Base):
+    __tablename__ = "revision_memory_eligibility"
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("post_revisions.id"), primary_key=True
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True
+    )
+    eligible: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reason: Mapped[str] = mapped_column(String(48))
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RevisionEmbedding(Base):
+    __tablename__ = "revision_embeddings"
+    revision_id: Mapped[str] = mapped_column(
+        ForeignKey("post_revisions.id"), primary_key=True
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True
+    )
+    embedding_version: Mapped[str] = mapped_column(String(40))
+    dimensions: Mapped[int] = mapped_column(Integer, default=EMBEDDING_DIMENSIONS)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    embedding: Mapped[list[float]] = mapped_column(EmbeddingVector())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RevisionRetrieval(Base):
+    __tablename__ = "revision_retrievals"
+    __table_args__ = (UniqueConstraint("generated_revision_id", "reference_revision_id"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True
+    )
+    generated_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"))
+    reference_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"))
+    similarity_score: Mapped[float] = mapped_column(Float)
+    embedding_version: Mapped[str] = mapped_column(String(40))
+    taxonomy_version: Mapped[str] = mapped_column(String(40))
+    rank: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AiBudgetPeriod(Base):
     __tablename__ = "ai_budget_periods"
     period: Mapped[str] = mapped_column(String(7), primary_key=True)
@@ -328,6 +389,9 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def create_schema() -> None:
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
     Base.metadata.create_all(engine)
     with SessionLocal() as session:
         if session.get(Workspace, BOOTSTRAP_WORKSPACE_ID) is None:

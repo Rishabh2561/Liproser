@@ -22,7 +22,8 @@ type VoiceProfile = { id:string; version:number; domain:string; target_audience:
 type EvidenceDraft = { statement:string; source_url:string; freshness_date:string };
 type ContentIdea = { id:string; taxonomy_version:string; pillar:string; topic:string; angle:string; audience_intent:string; evidence:{id:string;statement:string;source_url?:string|null;freshness_date?:string|null}[] };
 type ReviewCategory = "HOOK"|"TONE"|"CLARITY"|"CTA"|"LENGTH"|"EVIDENCE";
-type PrimaryDraft = { post_id:string; revision_id:string; revision_number:number; state:"DRAFT"|"IN_REVIEW"|"CHANGES_REQUESTED"|"REJECTED"|"APPROVED"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"|"human_edit"; generation_warning?:string|null; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION"|"CONFIRMED_PERSONAL";source_reference_ids:string[]}[]; checks:{id:string;check_type:string;severity:"BLOCKING"|"WARNING";passed:boolean;message:string}[]; reviews:{id:string;revision_id:string;revision_number:number;action:string;reason?:string|null;categories:string[];created_at:string}[] };
+type PrimaryDraft = { post_id:string; revision_id:string; revision_number:number; state:"DRAFT"|"IN_REVIEW"|"CHANGES_REQUESTED"|"REJECTED"|"APPROVED"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"|"human_edit"; generation_warning?:string|null; retrievals:{revision_id:string;topic:string;pillar:string;similarity_score:number;embedding_version:string;features:Record<string,string|number>}[]; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION"|"CONFIRMED_PERSONAL";source_reference_ids:string[]}[]; checks:{id:string;check_type:string;severity:"BLOCKING"|"WARNING";passed:boolean;message:string}[]; reviews:{id:string;revision_id:string;revision_number:number;action:string;reason?:string|null;categories:string[];created_at:string}[] };
+type MemoryRevision = { revision_id:string; post_id:string; revision_number:number; pillar:string; topic:string; taxonomy_version:string; embedding_version:string; features:{hook_style:string;word_count:number;paragraph_count:number;cta_style:string}; approved_at:string };
 
 const splitList = (value: string) => value.split(/[,\n]/).map(item=>item.trim()).filter(Boolean);
 
@@ -66,6 +67,7 @@ export default function Home() {
   const [reviewFeedback, setReviewFeedback] = useState("");
   const [reviewCategories, setReviewCategories] = useState<ReviewCategory[]>([]);
   const [rejectionReason, setRejectionReason] = useState("");
+  const [memoryRevisions, setMemoryRevisions] = useState<MemoryRevision[]>([]);
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
@@ -91,7 +93,13 @@ export default function Home() {
       setIdeaPillar(data.content_pillars[0] ?? "");
       setVoiceMessage(`Voice profile v${data.version} is ready.`);
     }).catch(()=>undefined);
+    refreshMemory();
   }, []);
+
+  async function refreshMemory() {
+    const response = await fetch(`${API}/v1/memory/revisions`).catch(()=>null);
+    if (response?.ok) setMemoryRevisions(await response.json());
+  }
 
   function chooseProvider(value: string) {
     const defaults: Record<string,string> = {fake:"fake-v1",ollama:"gemma3",openai:"gpt-5.6-luna",anthropic:""};
@@ -269,6 +277,7 @@ export default function Home() {
     const data = await response.json();
     if (!response.ok) return setContentMessage(data.detail ?? "The edited revision could not be saved.");
     adoptDraft(data);
+    await refreshMemory();
     setContentMessage(`Revision ${data.revision_number} saved as a new draft. Earlier revisions remain unchanged.`);
   }
 
@@ -309,6 +318,7 @@ export default function Home() {
     const data = await response.json();
     if (!response.ok) return setContentMessage(data.detail ?? "The revision could not be approved.");
     adoptDraft(data);
+    await refreshMemory();
     setContentMessage(`Revision ${data.revision_number} approved by you. Scheduling remains unavailable until v0.3.`);
   }
 
@@ -318,8 +328,9 @@ export default function Home() {
       <nav aria-label="Primary navigation">
         <a className="nav-item active" href="#profile"><span>01</span>Profile lab</a>
         <a className="nav-item" href="#voice"><span>02</span>Voice setup<small>v0.2</small></a>
-        <span className="nav-item disabled"><span>03</span>Calendar<small>v0.3</small></span>
-        <span className="nav-item disabled"><span>04</span>Analytics<small>v0.4</small></span>
+        <a className="nav-item" href="#library"><span>03</span>Library<small>v0.2D</small></a>
+        <span className="nav-item disabled"><span>04</span>Calendar<small>v0.3</small></span>
+        <span className="nav-item disabled"><span>05</span>Analytics<small>v0.4</small></span>
       </nav>
       <div className="privacy-card"><span className="privacy-icon">✓</span><strong>Private by design</strong><p>Your profile remains on this machine. Nothing publishes automatically.</p></div>
       <p className="version">Personal edition · v0.1</p>
@@ -440,7 +451,8 @@ export default function Home() {
             {primaryDraft.generation_warning && <p className="draft-warning">{primaryDraft.generation_warning}</p>}
             <article className="linkedin-preview" aria-label="LinkedIn-style draft preview"><div className="preview-author"><span>R</span><div><strong>Your name</strong><small>Your headline · now</small></div><b>•••</b></div><p className="preview-content"><strong>{primaryDraft.hook}</strong>{`\n\n${primaryDraft.body}\n\n${primaryDraft.cta}`}</p><div className="preview-reactions"><span>○ ○</span><span>0 comments · 0 reposts</span></div></article>
             <div className="claim-ledger"><div><strong>Claim ledger</strong><span>{primaryDraft.claims.length} classified</span></div>{primaryDraft.claims.map(claim=><p key={claim.id}><span className={claim.kind.toLowerCase()}>{claim.kind}</span>{claim.claim_text}<small>{claim.source_reference_ids.length ? `${claim.source_reference_ids.length} evidence link` : "No factual source claimed"}</small></p>)}</div>
-            <div className="revision-checks"><div><strong>Revision checks</strong><span>Originality and diversity arrive in v0.2D</span></div>{primaryDraft.checks.map(check=><p key={check.id} className={check.passed?"passed":"failed"}><b>{check.passed?"✓":"!"}</b><span><strong>{check.check_type.replaceAll("_"," ")}</strong><small>{check.severity} · {check.message}</small></span></p>)}</div>
+            {primaryDraft.retrievals.length > 0 && <div className="memory-provenance"><div><strong>First-party references</strong><span>Structure only · never copied</span></div>{primaryDraft.retrievals.map(reference=><p key={reference.revision_id}><span>{Math.round(reference.similarity_score*100)}% related</span><strong>{reference.topic}</strong><small>{reference.pillar} · {reference.embedding_version} · {reference.features.hook_style} hook</small></p>)}</div>}
+            <div className="revision-checks"><div><strong>Revision checks</strong><span>Claims, voice, originality, and diversity</span></div>{primaryDraft.checks.map(check=><p key={check.id} className={check.passed?"passed":"failed"}><b>{check.passed?"✓":"!"}</b><span><strong>{check.check_type.replaceAll("_"," ")}</strong><small>{check.severity} · {check.message}</small></span></p>)}</div>
             {showDraftEditor && <div className="draft-editor"><strong>Save changes as a new immutable revision</strong><label><span>Hook</span><textarea aria-label="Edit post hook" value={editedDraft.hook} onChange={event=>setEditedDraft({...editedDraft,hook:event.target.value})} rows={2}/></label><label><span>Body</span><textarea aria-label="Edit post body" value={editedDraft.body} onChange={event=>setEditedDraft({...editedDraft,body:event.target.value})} rows={7}/></label><label><span>CTA</span><textarea aria-label="Edit post CTA" value={editedDraft.cta} onChange={event=>setEditedDraft({...editedDraft,cta:event.target.value})} rows={2}/></label><label className="review-confirm"><input type="checkbox" checked={editClaimsConfirmed} onChange={event=>setEditClaimsConfirmed(event.target.checked)}/><span>I confirm every claim and numeric detail in this edited revision.</span></label><div className="review-buttons"><button className="button primary" onClick={saveDraftEdit}>Save new revision</button><button className="button outline" onClick={()=>setShowDraftEditor(false)}>Cancel edit</button></div></div>}
             {!showDraftEditor && primaryDraft.state !== "REJECTED" && <div className="review-buttons"><button className="button outline" onClick={()=>{setEditedDraft({hook:primaryDraft.hook,body:primaryDraft.body,cta:primaryDraft.cta});setShowDraftEditor(true);}}>Edit as new revision</button>{primaryDraft.state === "DRAFT" && <button className="button primary" onClick={submitDraftReview}>Submit revision for review</button>}</div>}
             {primaryDraft.state === "IN_REVIEW" && <div className="review-console">
@@ -455,7 +467,12 @@ export default function Home() {
         </>}
       </section>
 
-      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.2 in progress · Data stays local</small></footer>
+      <section className="memory-library" id="library">
+        <div className="studio-heading"><div><p className="eyebrow">FIRST-PARTY MEMORY · v0.2D</p><h2>Your approved work becomes a private reference.</h2><p>Only the exact approved revision appears here. Editing, rejecting, deleting, or superseding it removes eligibility. Liproser retrieves structural signals—not third-party posts or reusable copy.</p></div><span className="draft-limit">{memoryRevisions.length} eligible</span></div>
+        {memoryRevisions.length === 0 ? <div className="studio-locked"><strong>No eligible revisions yet</strong><p>Approve a reviewed draft to add it. Drafts and rejected posts never enter memory.</p></div> : <div className="memory-grid">{memoryRevisions.map(item=><article key={item.revision_id}><div><span>{item.pillar}</span><span>Revision {item.revision_number}</span></div><h3>{item.topic}</h3><p>{item.features.word_count} words · {item.features.paragraph_count} paragraphs · {item.features.hook_style.toLowerCase()} hook · {item.features.cta_style.toLowerCase()} CTA</p><small>{item.embedding_version} · {item.taxonomy_version}</small></article>)}</div>}
+      </section>
+
+      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.2D · Data stays local</small></footer>
     </main>
   </div>;
 }

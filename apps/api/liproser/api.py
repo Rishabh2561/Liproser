@@ -35,11 +35,20 @@ from .database import (
     ProviderConfiguration,
     Review,
     RevisionCheck,
+    RevisionRetrieval,
     SourceReference,
     TaxonomySnapshot,
     VoiceProfile,
     VoiceSample,
     get_db,
+)
+from .memory_service import (
+    eligible_revisions,
+    memory_checks,
+    record_retrievals,
+    retrieve_memory,
+    structural_features,
+    upsert_memory_status,
 )
 from .profile_service import (
     contains_template_placeholders,
@@ -68,6 +77,7 @@ from .schemas import (
     GeneratedSuggestion,
     ImportResponse,
     ManualImportRequest,
+    MemoryRevisionOutput,
     PostEditRequest,
     PrimaryDraftOutput,
     ProfileSections,
@@ -75,6 +85,7 @@ from .schemas import (
     ProviderCheckResponse,
     ProviderSecretRequest,
     RegenerationRequest,
+    RetrievalReferenceOutput,
     ReviewDecisionRequest,
     ReviewOutput,
     ReviewSubmissionRequest,
@@ -162,6 +173,29 @@ def primary_draft_output(db: Session, post: Post, revision: PostRevision) -> Pri
     reviews = db.scalars(
         select(Review).where(Review.post_id == post.id).order_by(Review.created_at, Review.id)
     ).all()
+    retrieval_rows = db.scalars(
+        select(RevisionRetrieval)
+        .where(RevisionRetrieval.generated_revision_id == revision.id)
+        .order_by(RevisionRetrieval.rank)
+    ).all()
+    retrievals = []
+    for row in retrieval_rows:
+        reference = db.get(PostRevision, row.reference_revision_id)
+        reference_post = db.get(Post, reference.post_id) if reference else None
+        reference_idea = db.get(ContentIdea, reference_post.content_idea_id) if reference_post else None
+        if reference and reference_post and reference_idea:
+            retrievals.append(
+                RetrievalReferenceOutput(
+                    revision_id=reference.id,
+                    post_id=reference_post.id,
+                    pillar=reference_idea.pillar,
+                    topic=reference_idea.topic,
+                    similarity_score=row.similarity_score,
+                    embedding_version=row.embedding_version,
+                    taxonomy_version=row.taxonomy_version,
+                    features=structural_features(reference),
+                )
+            )
     revision_numbers = dict(
         db.execute(
             select(PostRevision.id, PostRevision.revision_number).where(
@@ -188,6 +222,7 @@ def primary_draft_output(db: Session, post: Post, revision: PostRevision) -> Pri
         generation_warning=revision.generation_warning,
         prompt_version=revision.prompt_version,
         retrieved_revision_ids=revision.retrieved_revision_ids,
+        retrievals=retrievals,
         claims=[
             ClaimAssessmentOutput(
                 id=claim.id,
@@ -273,14 +308,17 @@ def persist_revision_checks(
     allowed_context: str,
     evidence: list[SourceReference],
     prohibited_phrases: list[str],
+    memory_references: list[dict] | None = None,
 ) -> None:
-    for finding in evaluate_revision_checks(
+    findings = evaluate_revision_checks(
         revision.content,
         claims,
         allowed_context,
         [item.statement for item in evidence],
         prohibited_phrases,
-    ):
+    )
+    findings.extend(memory_checks(revision.content, revision.hook, memory_references or [], db))
+    for finding in findings:
         db.add(
             RevisionCheck(
                 id=str(uuid4()),
@@ -295,10 +333,12 @@ def persist_revision_checks(
 
 
 def ensure_revision_checks(db: Session, post: Post, revision: PostRevision) -> None:
-    if db.scalar(
-        select(RevisionCheck.id).where(RevisionCheck.post_revision_id == revision.id).limit(1)
-    ):
-        return
+    # The eligible memory corpus can change between draft creation and approval.
+    # Re-running every check at each review boundary prevents stale originality results.
+    for check in db.scalars(
+        select(RevisionCheck).where(RevisionCheck.post_revision_id == revision.id)
+    ).all():
+        db.delete(check)
     _, voice, evidence, allowed_context = revision_context(db, post)
     claims = db.scalars(
         select(ClaimAssessment).where(ClaimAssessment.post_revision_id == revision.id)
@@ -310,6 +350,12 @@ def ensure_revision_checks(db: Session, post: Post, revision: PostRevision) -> N
         allowed_context,
         evidence,
         voice.prohibited_phrases,
+        retrieve_memory(
+            db,
+            query=revision.content,
+            taxonomy_version=revision.taxonomy_version,
+            exclude_post_id=post.id,
+        ),
     )
     db.flush()
 
@@ -322,6 +368,7 @@ def generate_content_candidate(
     evidence: list[SourceReference],
     feedback: dict | None = None,
     previous_revision: PostRevision | None = None,
+    memory_references: list[dict] | None = None,
 ):
     samples = db.scalars(
         select(VoiceSample)
@@ -372,6 +419,15 @@ def generate_content_candidate(
                 "angle": idea.angle,
                 "audience_intent": idea.audience_intent,
                 "format": idea.format,
+                "first_party_patterns": [
+                    {
+                        "pillar": item["pillar"],
+                        "topic": item["topic"],
+                        "similarity_score": item["similarity_score"],
+                        "features": item["features"],
+                    }
+                    for item in (memory_references or [])
+                ],
             }
             if feedback:
                 idea_payload["regeneration_feedback"] = feedback
@@ -549,6 +605,34 @@ def current_taxonomy(db: Session = Depends(get_db)):
     )
 
 
+@router.get("/memory/revisions", response_model=list[MemoryRevisionOutput])
+def list_memory_revisions(db: Session = Depends(get_db)):
+    items = []
+    for revision, post, idea, embedding in eligible_revisions(db):
+        approval = db.scalars(
+            select(Review)
+            .where(Review.revision_id == revision.id, Review.action == "APPROVE")
+            .order_by(Review.created_at.desc())
+            .limit(1)
+        ).first()
+        if approval is None:
+            continue
+        items.append(
+            MemoryRevisionOutput(
+                revision_id=revision.id,
+                post_id=post.id,
+                revision_number=revision.revision_number,
+                pillar=idea.pillar,
+                topic=idea.topic,
+                taxonomy_version=revision.taxonomy_version,
+                embedding_version=embedding.embedding_version,
+                features=structural_features(revision),
+                approved_at=approval.created_at,
+            )
+        )
+    return items
+
+
 @router.post("/content-ideas", response_model=ContentIdeaOutput, status_code=201)
 def create_content_idea(body: ContentIdeaCreate, db: Session = Depends(get_db)):
     voice = db.scalars(
@@ -622,7 +706,14 @@ def create_primary_draft(
         .where(SourceReference.content_idea_id == idea.id)
         .order_by(SourceReference.created_at, SourceReference.id)
     ).all()
-    generated, generation = generate_content_candidate(db, settings, idea, voice, evidence)
+    memory_references = retrieve_memory(
+        db,
+        query="\n".join((idea.pillar, idea.topic, idea.angle, idea.audience_intent)),
+        taxonomy_version=idea.taxonomy_version,
+    )
+    generated, generation = generate_content_candidate(
+        db, settings, idea, voice, evidence, memory_references=memory_references
+    )
     allowed_context = "\n".join(
         (
             voice.domain,
@@ -652,10 +743,11 @@ def create_primary_draft(
         generation_warning=generation["warning"],
         prompt_version="primary-draft@1",
         taxonomy_version=idea.taxonomy_version,
-        retrieved_revision_ids=[],
+        retrieved_revision_ids=[item["revision_id"] for item in memory_references],
     )
     db.add(revision)
     db.flush()
+    record_retrievals(db, revision, memory_references)
     for claim in generated["claims"]:
         source_ids = [
             evidence[index - 1].id
@@ -678,6 +770,7 @@ def create_primary_draft(
         allowed_context,
         evidence,
         voice.prohibited_phrases,
+        memory_references,
     )
     db.commit()
     db.refresh(post)
@@ -758,10 +851,12 @@ def decide_post_review(
         if blocking_failure:
             raise HTTPException(409, "Resolve blocking checks before approval")
         post.state = "APPROVED"
+        upsert_memory_status(db, revision, eligible=True, reason="EXACT_APPROVAL_VALID")
     elif body.action == "REJECT":
         if not body.reason:
             raise HTTPException(422, "A rejection reason is required")
         post.state = "REJECTED"
+        upsert_memory_status(db, revision, eligible=False, reason="REJECTED")
     else:
         if not body.reason or not body.categories:
             raise HTTPException(422, "A reason and at least one feedback category are required")
@@ -794,6 +889,7 @@ def edit_post_revision(
     previous = require_current_revision(db, post, body.revision_id)
     if post.state == "REJECTED":
         raise HTTPException(409, "A rejected post is terminal")
+    upsert_memory_status(db, previous, eligible=False, reason="SUPERSEDED_UNPUBLISHED")
     values = {"hook": body.hook, "body": body.body, "cta": body.cta}
     operations = [
         {"field": field, "before": getattr(previous, field), "after": value}
@@ -804,6 +900,12 @@ def edit_post_revision(
         raise HTTPException(422, "Change at least one field before saving a new revision")
     idea, voice, evidence, allowed_context = revision_context(db, post)
     claims = user_edit_claims([body.hook, body.body, body.cta], [item.statement for item in evidence])
+    memory_references = retrieve_memory(
+        db,
+        query="\n\n".join((body.hook, body.body, body.cta)),
+        taxonomy_version=idea.taxonomy_version,
+        exclude_post_id=post.id,
+    )
     revision = PostRevision(
         id=str(uuid4()),
         post_id=post.id,
@@ -818,10 +920,11 @@ def edit_post_revision(
         generation_warning=None,
         prompt_version="human-edit@1",
         taxonomy_version=idea.taxonomy_version,
-        retrieved_revision_ids=[],
+        retrieved_revision_ids=[item["revision_id"] for item in memory_references],
     )
     db.add(revision)
     db.flush()
+    record_retrievals(db, revision, memory_references)
     for claim in claims:
         source_ids = [
             evidence[index - 1].id
@@ -838,7 +941,13 @@ def edit_post_revision(
             )
         )
     persist_revision_checks(
-        db, revision, claims, allowed_context, evidence, voice.prohibited_phrases
+        db,
+        revision,
+        claims,
+        allowed_context,
+        evidence,
+        voice.prohibited_phrases,
+        memory_references,
     )
     db.add(
         EditDelta(
@@ -892,6 +1001,13 @@ def regenerate_post_revision(
     if not feedback:
         raise HTTPException(409, "Structured regeneration feedback is missing")
     idea, voice, evidence, allowed_context = revision_context(db, post)
+    upsert_memory_status(db, previous, eligible=False, reason="SUPERSEDED_UNPUBLISHED")
+    memory_references = retrieve_memory(
+        db,
+        query="\n".join((idea.pillar, idea.topic, idea.angle, idea.audience_intent)),
+        taxonomy_version=idea.taxonomy_version,
+        exclude_post_id=post.id,
+    )
     generated, generation = generate_content_candidate(
         db,
         settings,
@@ -900,6 +1016,7 @@ def regenerate_post_revision(
         evidence,
         feedback={"categories": feedback.categories, "instruction": feedback.reason},
         previous_revision=previous,
+        memory_references=memory_references,
     )
     revision = PostRevision(
         id=str(uuid4()),
@@ -915,10 +1032,11 @@ def regenerate_post_revision(
         generation_warning=generation["warning"],
         prompt_version="regeneration@1",
         taxonomy_version=idea.taxonomy_version,
-        retrieved_revision_ids=[],
+        retrieved_revision_ids=[item["revision_id"] for item in memory_references],
     )
     db.add(revision)
     db.flush()
+    record_retrievals(db, revision, memory_references)
     for claim in generated["claims"]:
         source_ids = [
             evidence[index - 1].id
@@ -935,7 +1053,13 @@ def regenerate_post_revision(
             )
         )
     persist_revision_checks(
-        db, revision, generated["claims"], allowed_context, evidence, voice.prohibited_phrases
+        db,
+        revision,
+        generated["claims"],
+        allowed_context,
+        evidence,
+        voice.prohibited_phrases,
+        memory_references,
     )
     operations = [
         {"field": field, "before": getattr(previous, field), "after": generated[field]}

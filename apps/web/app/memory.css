@@ -1,0 +1,73 @@
+.memory-provenance {
+  grid-column: 1 / -1;
+  padding: 18px;
+  border: 1px solid #dcd7ff;
+  border-radius: 15px;
+  background: #f7f6ff;
+}
+
+.memory-provenance > div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.memory-provenance p {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 10px;
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid #ded9ff;
+}
+
+.memory-provenance p > span {
+  grid-row: span 2;
+  align-self: center;
+  padding: 5px 7px;
+  border-radius: 99px;
+  background: #e8e5ff;
+  color: #5541bd;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.memory-provenance p strong { font-size: 10px; }
+.memory-provenance p small { color: var(--muted); font-size: 8px; }
+
+.memory-library {
+  width: min(1050px, calc(100% - 48px));
+  margin: 42px auto;
+  padding: clamp(22px, 4vw, 40px);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: linear-gradient(145deg, #fff, #f7f6ff);
+  box-shadow: var(--shadow);
+  scroll-margin-top: 24px;
+}
+
+.memory-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.memory-grid article {
+  padding: 17px;
+  border: 1px solid #dcd7ff;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.memory-grid article > div { display: flex; justify-content: space-between; gap: 8px; }
+.memory-grid article span { color: var(--purple); font-size: 8px; font-weight: 800; text-transform: uppercase; }
+.memory-grid h3 { margin: 13px 0 7px; font: 800 15px "Manrope"; }
+.memory-grid p { color: var(--muted); font-size: 9px; line-height: 1.6; }
+.memory-grid small { color: #929aaa; font-size: 8px; }
+
+@media (max-width: 760px) {
+  .memory-grid { grid-template-columns: 1fr; }
+  .memory-library { width: calc(100% - 30px); }
+}

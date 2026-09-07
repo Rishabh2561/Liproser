@@ -243,7 +243,7 @@ class ClaimAssessmentOutput(BaseModel):
 
 class RevisionCheckOutput(BaseModel):
     id: str
-    check_type: Literal["CLAIM_TRACEABILITY", "PROHIBITED_PHRASES", "READABILITY", "ACCESSIBILITY"]
+    check_type: Literal["CLAIM_TRACEABILITY", "PROHIBITED_PHRASES", "READABILITY", "ACCESSIBILITY", "ORIGINALITY", "DIVERSITY"]
     severity: Literal["BLOCKING", "WARNING"]
     passed: bool
     message: str
@@ -298,6 +298,29 @@ class RegenerationRequest(BaseModel):
     revision_id: str
 
 
+class RetrievalReferenceOutput(BaseModel):
+    revision_id: str
+    post_id: str
+    pillar: str
+    topic: str
+    similarity_score: float
+    embedding_version: str
+    taxonomy_version: str
+    features: dict[str, Any]
+
+
+class MemoryRevisionOutput(BaseModel):
+    revision_id: str
+    post_id: str
+    revision_number: int
+    pillar: str
+    topic: str
+    taxonomy_version: str
+    embedding_version: str
+    features: dict[str, Any]
+    approved_at: datetime
+
+
 class PrimaryDraftOutput(BaseModel):
     post_id: str
     revision_id: str
@@ -317,6 +340,7 @@ class PrimaryDraftOutput(BaseModel):
     generation_warning: str | None
     prompt_version: str
     retrieved_revision_ids: list[str]
+    retrievals: list[RetrievalReferenceOutput]
     claims: list[ClaimAssessmentOutput]
     checks: list[RevisionCheckOutput]
     reviews: list[ReviewOutput]
