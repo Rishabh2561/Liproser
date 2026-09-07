@@ -23,12 +23,15 @@ type EvidenceDraft = { statement:string; source_url:string; freshness_date:strin
 type ContentIdea = { id:string; taxonomy_version:string; pillar:string; topic:string; angle:string; audience_intent:string; evidence:{id:string;statement:string;source_url?:string|null;freshness_date?:string|null}[] };
 type ReviewCategory = "HOOK"|"TONE"|"CLARITY"|"CTA"|"LENGTH"|"EVIDENCE";
 type PrimaryDraft = { post_id:string; revision_id:string; revision_number:number; state:"DRAFT"|"IN_REVIEW"|"CHANGES_REQUESTED"|"REJECTED"|"APPROVED"|"SCHEDULED"|"PUBLISH_ACTION_REQUIRED"|"PUBLISHED"|"FAILED"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"|"human_edit"; generation_warning?:string|null; retrievals:{revision_id:string;topic:string;pillar:string;similarity_score:number;embedding_version:string;features:Record<string,string|number>}[]; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION"|"CONFIRMED_PERSONAL";source_reference_ids:string[]}[]; checks:{id:string;check_type:string;severity:"BLOCKING"|"WARNING";passed:boolean;message:string}[]; reviews:{id:string;revision_id:string;revision_number:number;action:string;reason?:string|null;categories:string[];created_at:string}[] };
-type MemoryRevision = { revision_id:string; post_id:string; revision_number:number; pillar:string; topic:string; taxonomy_version:string; embedding_version:string; features:{hook_style:string;word_count:number;paragraph_count:number;cta_style:string}; approved_at:string };
+type MemoryRevision = { revision_id:string; post_id:string; state:string; revision_number:number; pillar:string; topic:string; taxonomy_version:string; embedding_version:string; features:{hook_style:string;word_count:number;paragraph_count:number;cta_style:string}; approved_at:string };
 type CalendarSlot = {id:string;position:number;pillar:string;intended_local_at:string;resolved_utc_at:string;status:"PLANNED"|"ASSIGNED"|"CANCELLED"};
 type ContentCalendar = {id:string;start_date:string;weeks:number;cadence_per_week:number;timezone:string;quiet_days:string[];slots:CalendarSlot[]};
 type PostSchedule = {id:string;post_id:string;revision_id:string;calendar_slot_id?:string|null;timezone:string;intended_local_at:string;resolved_utc_at:string;status:"ACTIVE"|"REMINDER_DUE"|"COMPLETED"|"CANCELLED"|"FAILED"};
 type PublishAction = {id:string;schedule_id:string;post_id:string;revision_id:string;state:"ACTION_REQUIRED"|"PUBLISHED"|"FAILED";formatted_content:string;published_url?:string|null};
 type Preference = {id:string;category:string;instruction:string;evidence_count:number;active:boolean;version:number};
+type Experiment = {id:string;name:string;hypothesis:string;variable:string;status:"ACTIVE"|"COMPLETED"};
+type AnalyticsSummary = {snapshot_count:number;comparable_post_count:number;baseline_engagement_rate?:number|null;current_engagement_rate?:number|null;lift_percent?:number|null;best_pillars:{pillar:string;engagement_rate:number;post_count:number}[];calibration_count:number;mean_absolute_error?:number|null};
+type Prediction = {id:string;post_revision_id:string;target_window_hours:number;basis:"DOMAIN_PRIOR"|"BLENDED"|"PERSONALIZED";bucket:"LOW"|"MEDIUM"|"HIGH";expected_engagement_rate:number;interval:[number,number];factors:{feature:string;impact:string;explanation:string}[];recommended_change?:string|null;limitations:string[];actual_engagement_rate?:number|null;absolute_error?:number|null};
 
 const splitList = (value: string) => value.split(/[,\n]/).map(item=>item.trim()).filter(Boolean);
 
@@ -83,6 +86,20 @@ export default function Home() {
   const [publishAction, setPublishAction] = useState<PublishAction|null>(null);
   const [publishedUrl, setPublishedUrl] = useState("");
   const [preferences, setPreferences] = useState<Preference[]>([]);
+  const [analyticsRevisionId, setAnalyticsRevisionId] = useState("");
+  const [predictionRevisionId, setPredictionRevisionId] = useState("");
+  const [analyticsWindow, setAnalyticsWindow] = useState(168);
+  const [analyticsSummary, setAnalyticsSummary] = useState<AnalyticsSummary|null>(null);
+  const [prediction, setPrediction] = useState<Prediction|null>(null);
+  const [analyticsMessage, setAnalyticsMessage] = useState("Import a published post or select one from your private library.");
+  const [metricObserved, setMetricObserved] = useState(()=>new Date().toISOString().slice(0,16));
+  const [metrics, setMetrics] = useState({impressions:"",reactions:"",comments:"",reposts:"",follower_delta:"",clicks:""});
+  const [metricBaseline, setMetricBaseline] = useState(false);
+  const [experiments, setExperiments] = useState<Experiment[]>([]);
+  const [experimentId, setExperimentId] = useState("");
+  const [experimentDraft, setExperimentDraft] = useState({name:"",hypothesis:"",variable:""});
+  const [historical, setHistorical] = useState({pillar:"",topic:"",hook:"",body:"",cta:"",published_at:new Date(Date.now()-86400000).toISOString().slice(0,16)});
+  const [historicalOwned, setHistoricalOwned] = useState(false);
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
@@ -106,15 +123,17 @@ export default function Home() {
       setVoiceSamples(data.samples.map(sample=>sample.text));
       setVoiceOwned(true);
       setIdeaPillar(data.content_pillars[0] ?? "");
+      setHistorical(current=>({...current,pillar:current.pillar||data.content_pillars[0]||""}));
       setVoiceMessage(`Voice profile v${data.version} is ready.`);
     }).catch(()=>undefined);
     refreshMemory();
     refreshCalendar();
+    refreshAnalytics();
   }, []);
 
   async function refreshMemory() {
     const response = await fetch(`${API}/v1/memory/revisions`).catch(()=>null);
-    if (response?.ok) setMemoryRevisions(await response.json());
+    if (response?.ok) { const items=await response.json(); setMemoryRevisions(items); setAnalyticsRevisionId(current=>current||items.find((item:MemoryRevision)=>item.state==="PUBLISHED")?.revision_id||""); setPredictionRevisionId(current=>current||items[0]?.revision_id||""); }
   }
 
   async function refreshCalendar() {
@@ -154,12 +173,62 @@ export default function Home() {
     if(!publishAction)return;
     const response=await fetch(`${API}/v1/publish-actions/${publishAction.id}/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({published_url:publishedUrl.trim()||null})});
     const data=await response.json(); if(!response.ok)return setCalendarMessage(data.detail??"Publication could not be confirmed.");
-    setPublishAction(data); if(primaryDraft)setPrimaryDraft({...primaryDraft,state:"PUBLISHED"}); await refreshMemory(); setCalendarMessage("Publication confirmed. Analytics can be added in v0.4.");
+    setPublishAction(data); if(primaryDraft){setPrimaryDraft({...primaryDraft,state:"PUBLISHED"});setAnalyticsRevisionId(primaryDraft.revision_id);setPredictionRevisionId(primaryDraft.revision_id);} await refreshMemory(); setCalendarMessage("Publication confirmed. Add a comparable analytics snapshot below.");
   }
 
   async function togglePreference(item:Preference) {
     const response=await fetch(`${API}/v1/feedback/preferences/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:!item.active})});
     if(response.ok){const updated=await response.json();setPreferences(current=>current.map(value=>value.id===updated.id?updated:value));}
+  }
+
+  async function refreshAnalytics(windowHours=analyticsWindow) {
+    const [summaryResponse,predictionResponse,experimentResponse]=await Promise.all([
+      fetch(`${API}/v1/analytics/summary?window_hours=${windowHours}`).catch(()=>null),
+      fetch(`${API}/v1/predictions`).catch(()=>null),
+      fetch(`${API}/v1/experiments`).catch(()=>null),
+    ]);
+    if(summaryResponse?.ok)setAnalyticsSummary(await summaryResponse.json());
+    if(predictionResponse?.ok){const items=await predictionResponse.json();setPrediction(items[0]??null);}
+    if(experimentResponse?.ok)setExperiments(await experimentResponse.json());
+  }
+
+  async function importHistoricalPost(event:FormEvent) {
+    event.preventDefault();
+    if(!historicalOwned)return setAnalyticsMessage("Confirm that the historical post is yours before importing it.");
+    const response=await fetch(`${API}/v1/historical-posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...historical,pillar:historical.pillar||voiceProfile?.content_pillars[0],published_at:new Date(historical.published_at).toISOString(),content_is_user_owned:true})});
+    const data=await response.json();if(!response.ok)return setAnalyticsMessage(data.detail??"Historical post could not be imported.");
+    setAnalyticsRevisionId(data.revision_id);setPredictionRevisionId(data.revision_id);await refreshMemory();setAnalyticsMessage("Owned historical post added to your private baseline library.");
+  }
+
+  async function createExperiment(event:FormEvent) {
+    event.preventDefault();
+    const response=await fetch(`${API}/v1/experiments`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(experimentDraft)});
+    const data=await response.json();if(!response.ok)return setAnalyticsMessage(data.detail??"Experiment could not be created.");
+    setExperiments(current=>[data,...current]);setExperimentId(data.id);setExperimentDraft({name:"",hypothesis:"",variable:""});setAnalyticsMessage("Experiment tag created. Change one variable when possible.");
+  }
+
+  async function saveMetrics(event:FormEvent) {
+    event.preventDefault();
+    if(!analyticsRevisionId)return setAnalyticsMessage("Select a published revision first.");
+    const numeric=Object.fromEntries(Object.entries(metrics).map(([key,value])=>[key,value===""?null:Number(value)]));
+    const response=await fetch(`${API}/v1/metric-snapshots`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({post_revision_id:analyticsRevisionId,observed_at:new Date(metricObserved).toISOString(),window_hours:analyticsWindow,...numeric,baseline:metricBaseline,experiment_id:experimentId||null})});
+    const data=await response.json();if(!response.ok)return setAnalyticsMessage(data.detail??"Metrics could not be saved.");
+    await refreshAnalytics();setAnalyticsMessage(`Saved ${analyticsWindow}-hour snapshot with ${data.engagement_rate??"no"}% measurable engagement.`);
+  }
+
+  async function uploadMetricsCsv(file?:File) {
+    if(!file)return;
+    const form=new FormData();form.append("file",file);
+    const response=await fetch(`${API}/v1/metric-snapshots/import-csv`,{method:"POST",body:form});
+    const data=await response.json();if(!response.ok)return setAnalyticsMessage(data.detail??"CSV import failed.");
+    await refreshAnalytics();setAnalyticsMessage(`${data.created} snapshots imported, ${data.duplicates} duplicates skipped, ${data.errors.length} row errors.`);
+  }
+
+  async function predictPerformance() {
+    if(!predictionRevisionId)return setAnalyticsMessage("Select an approved or published revision before predicting performance.");
+    const response=await fetch(`${API}/v1/predictions`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({post_revision_id:predictionRevisionId,target_window_hours:analyticsWindow})});
+    const data=await response.json();if(!response.ok)return setAnalyticsMessage(data.detail??"Prediction could not be created.");
+    setPrediction(data);setAnalyticsMessage(`${data.basis.replaceAll("_"," ")} estimate created. Treat it as guidance, never a guarantee.`);
   }
 
   function chooseProvider(value: string) {
@@ -380,7 +449,7 @@ export default function Home() {
     if (!response.ok) return setContentMessage(data.detail ?? "The revision could not be approved.");
     adoptDraft(data);
     await refreshMemory();
-    setContentMessage(`Revision ${data.revision_number} approved by you. Scheduling remains unavailable until v0.3.`);
+    setContentMessage(`Revision ${data.revision_number} approved by you. It can now be scheduled in the calendar.`);
   }
 
   return <div className="app-shell">
@@ -391,10 +460,10 @@ export default function Home() {
         <a className="nav-item" href="#voice"><span>02</span>Voice setup<small>v0.2</small></a>
         <a className="nav-item" href="#library"><span>03</span>Library<small>v0.2D</small></a>
         <a className="nav-item" href="#calendar"><span>04</span>Calendar<small>v0.3</small></a>
-        <span className="nav-item disabled"><span>05</span>Analytics<small>v0.4</small></span>
+        <a className="nav-item" href="#analytics"><span>05</span>Analytics<small>v0.4</small></a>
       </nav>
       <div className="privacy-card"><span className="privacy-icon">✓</span><strong>Private by design</strong><p>Your profile remains on this machine. Nothing publishes automatically.</p></div>
-      <p className="version">Personal edition · v0.1</p>
+      <p className="version">Personal edition · v0.4</p>
     </aside>
 
     <main className="workspace" id="top">
@@ -549,7 +618,55 @@ export default function Home() {
         <div className="preference-panel"><div><strong>Learned preferences</strong><span>Created only after two matching feedback signals; every rule is reversible.</span></div>{preferences.length===0?<p>No repeated preference signals yet.</p>:preferences.map(item=><article key={item.id}><div><strong>{item.category.replaceAll("_"," ")}</strong><small>{item.evidence_count} signals · version {item.version}</small><p>{item.instruction}</p></div><button className={`preference-toggle ${item.active?"active":""}`} onClick={()=>togglePreference(item)}>{item.active?"Enabled":"Disabled"}</button></article>)}</div>
       </section>
 
-      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.3 · Data stays local</small></footer>
+      <section className="analytics-section" id="analytics">
+        <div className="studio-heading"><div><p className="eyebrow">ANALYTICS & PREDICTION · v0.4</p><h2>Learn from comparable outcomes, not vanity totals.</h2><p>Import only your own published posts and compare snapshots with the same observation window. Predictions explain their evidence basis and never promise reach.</p></div><span className="draft-limit">Manual or CSV</span></div>
+        <div className="analytics-grid">
+          <form className="analytics-panel" onSubmit={importHistoricalPost}>
+            <div><strong>Import an owned historical post</strong><span>Build a pre-Liproser baseline without scraping.</span></div>
+            <label><span>Controlled pillar</span><select aria-label="Historical post pillar" value={historical.pillar} onChange={event=>setHistorical({...historical,pillar:event.target.value})}>{!voiceProfile&&<option value="">Save a voice profile first</option>}{voiceProfile?.content_pillars.map(pillar=><option key={pillar}>{pillar}</option>)}</select></label>
+            <label><span>Topic</span><input aria-label="Historical post topic" value={historical.topic} onChange={event=>setHistorical({...historical,topic:event.target.value})} required/></label>
+            <label><span>Hook</span><textarea aria-label="Historical post hook" value={historical.hook} onChange={event=>setHistorical({...historical,hook:event.target.value})} rows={2} required/></label>
+            <label><span>Body</span><textarea aria-label="Historical post body" value={historical.body} onChange={event=>setHistorical({...historical,body:event.target.value})} rows={5} required/></label>
+            <label><span>CTA <small>optional</small></span><input aria-label="Historical post CTA" value={historical.cta} onChange={event=>setHistorical({...historical,cta:event.target.value})}/></label>
+            <label><span>Published at</span><input aria-label="Historical post published at" type="datetime-local" value={historical.published_at} onChange={event=>setHistorical({...historical,published_at:event.target.value})} required/></label>
+            <label className="analytics-check"><input type="checkbox" checked={historicalOwned} onChange={event=>setHistoricalOwned(event.target.checked)}/><span>I confirm this post is mine or I am authorized to use it privately.</span></label>
+            <button className="button primary" type="submit" disabled={!voiceProfile}>Import owned post</button>
+          </form>
+
+          <form className="analytics-panel" onSubmit={createExperiment}>
+            <div><strong>Create an experiment tag</strong><span>Change one element so later comparisons stay interpretable.</span></div>
+            <label><span>Name</span><input aria-label="Experiment name" value={experimentDraft.name} onChange={event=>setExperimentDraft({...experimentDraft,name:event.target.value})} placeholder="Question CTA" required/></label>
+            <label><span>Hypothesis</span><textarea aria-label="Experiment hypothesis" value={experimentDraft.hypothesis} onChange={event=>setExperimentDraft({...experimentDraft,hypothesis:event.target.value})} rows={3} placeholder="A specific closing question increases meaningful replies." required/></label>
+            <label><span>One variable</span><input aria-label="Experiment variable" value={experimentDraft.variable} onChange={event=>setExperimentDraft({...experimentDraft,variable:event.target.value})} placeholder="CTA" required/></label>
+            <button className="button outline" type="submit">Create experiment tag</button>
+          </form>
+        </div>
+
+        <form className="metric-form" onSubmit={saveMetrics}>
+          <div className="metric-heading"><div><strong>Add a comparable metric snapshot</strong><span>Use the same observation window—such as 24 or 168 hours—across posts.</span></div><label className="csv-button">Import CSV<input type="file" accept=".csv,text/csv" aria-label="Import analytics CSV" onChange={event=>uploadMetricsCsv(event.target.files?.[0])}/></label></div>
+          <div className="metric-grid">
+            <label className="metric-wide"><span>Published revision for metrics</span><select aria-label="Analytics published revision" value={analyticsRevisionId} onChange={event=>setAnalyticsRevisionId(event.target.value)} required><option value="">Select your published post</option>{memoryRevisions.filter(item=>item.state==="PUBLISHED").map(item=><option key={item.revision_id} value={item.revision_id}>{item.topic} · revision {item.revision_number}</option>)}</select></label>
+            <label className="metric-wide"><span>Approved or published revision to predict</span><select aria-label="Prediction revision" value={predictionRevisionId} onChange={event=>setPredictionRevisionId(event.target.value)}><option value="">Select a prediction candidate</option>{memoryRevisions.map(item=><option key={item.revision_id} value={item.revision_id}>{item.topic} · {item.state.replaceAll("_"," ")}</option>)}</select></label>
+            <label><span>Observed at</span><input aria-label="Metrics observed at" type="datetime-local" value={metricObserved} onChange={event=>setMetricObserved(event.target.value)} required/></label>
+            <label><span>Window hours</span><input aria-label="Metrics observation window" type="number" min="1" max="8760" value={analyticsWindow} onChange={event=>{const value=Number(event.target.value);setAnalyticsWindow(value);refreshAnalytics(value);}} required/></label>
+            {(Object.keys(metrics) as (keyof typeof metrics)[]).map(key=><label key={key}><span>{key.replaceAll("_"," ")}</span><input aria-label={`Metric ${key.replaceAll("_"," ")}`} type="number" min={key==="follower_delta"?undefined:0} value={metrics[key]} onChange={event=>setMetrics({...metrics,[key]:event.target.value})}/></label>)}
+            <label className="metric-wide"><span>Experiment <small>optional</small></span><select aria-label="Metric experiment" value={experimentId} onChange={event=>setExperimentId(event.target.value)}><option value="">No experiment</option>{experiments.map(item=><option key={item.id} value={item.id}>{item.name} · {item.variable}</option>)}</select></label>
+            <label className="analytics-check metric-wide"><input type="checkbox" checked={metricBaseline} onChange={event=>setMetricBaseline(event.target.checked)}/><span>Mark this as a pre-Liproser baseline snapshot.</span></label>
+          </div>
+          <div className="metric-actions"><button className="button primary" type="submit">Save metric snapshot</button><button className="button accent" type="button" onClick={predictPerformance}>Predict selected revision</button><p role="status">{analyticsMessage}</p></div>
+        </form>
+
+        <div className="analytics-results">
+          <article><span>Comparable posts</span><strong>{analyticsSummary?.comparable_post_count??0}</strong><small>{analyticsWindow}-hour window</small></article>
+          <article><span>Baseline engagement</span><strong>{analyticsSummary?.baseline_engagement_rate!=null?`${analyticsSummary.baseline_engagement_rate}%`:"—"}</strong><small>Pre-Liproser only</small></article>
+          <article><span>Current engagement</span><strong>{analyticsSummary?.current_engagement_rate!=null?`${analyticsSummary.current_engagement_rate}%`:"—"}</strong><small>{analyticsSummary?.lift_percent!=null?`${analyticsSummary.lift_percent}% vs baseline`:"Needs a matching baseline"}</small></article>
+          <article><span>Prediction error</span><strong>{analyticsSummary?.mean_absolute_error!=null?`${analyticsSummary.mean_absolute_error}pp`:"—"}</strong><small>{analyticsSummary?.calibration_count??0} evaluated predictions</small></article>
+        </div>
+        {prediction&&<div className="prediction-panel"><div><span className={`prediction-bucket ${prediction.bucket.toLowerCase()}`}>{prediction.bucket}</span><div><strong>{prediction.expected_engagement_rate}% expected engagement</strong><small>{prediction.interval[0]}–{prediction.interval[1]}% interval · {prediction.basis.replaceAll("_"," ")}</small></div></div><div className="prediction-factors">{prediction.factors.map(factor=><article key={factor.feature}><span className={factor.impact.toLowerCase()}>{factor.impact}</span><strong>{factor.feature}</strong><p>{factor.explanation}</p></article>)}</div>{prediction.recommended_change&&<p className="recommended-change"><strong>One change most likely to help</strong>{prediction.recommended_change}</p>}<ul>{prediction.limitations.map(item=><li key={item}>{item}</li>)}</ul></div>}
+        {analyticsSummary?.best_pillars.length?<div className="pillar-performance"><strong>Best comparable pillars</strong>{analyticsSummary.best_pillars.map(item=><span key={item.pillar}>{item.pillar}<b>{item.engagement_rate}% · {item.post_count} post{item.post_count===1?"":"s"}</b></span>)}</div>:null}
+      </section>
+
+      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.4 · Data stays local</small></footer>
     </main>
   </div>;
 }

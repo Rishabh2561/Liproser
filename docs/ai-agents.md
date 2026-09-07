@@ -92,7 +92,9 @@ Converts edit deltas, regeneration instructions, approvals, and rejections into 
 
 ### Performance Explainer (`v0.4`)
 
-Translates an already-computed statistical prediction into a bucket, calibrated interval explanation, top three model factors, data basis (`DOMAIN_PRIOR`, `BLENDED`, or `PERSONALIZED`), limitations, and one feasible edit. It cannot compute or alter predictions and never states guarantees or causal certainty. Fallback uses deterministic templates.
+Translates an already-computed prediction into a bucket, interval explanation, top three model factors, data basis (`DOMAIN_PRIOR`, `BLENDED`, or `PERSONALIZED`), limitations, and one feasible edit. It cannot compute or alter predictions and never states guarantees or causal certainty. Fallback uses deterministic templates; calibration is reported only after matching-window outcomes exist.
+
+The current `v0.4` implementation keeps both feature scoring and explanation deterministic in application code; no runtime agent or hosted-model call participates. A later Performance Explainer may verbalize only the already-persisted factors and interval after schema and fidelity evaluation gates pass.
 
 ## First-party memory eligibility
 

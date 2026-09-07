@@ -4,11 +4,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .analytics_service import (
+    add_metric_snapshot,
+    analytics_summary,
+    create_prediction,
+    engagement_rate,
+    parse_csv_rows,
+)
 from .budget import BudgetExceededError, reconcile, reserve
 from .config import Settings, get_settings
 from .content_service import (
@@ -28,9 +35,12 @@ from .database import (
     ContentCalendar,
     ContentIdea,
     EditDelta,
+    Experiment,
+    MetricSnapshot,
     Post,
     PostRevision,
     PostSchedule,
+    Prediction,
     PreferenceRule,
     Profile,
     ProfileAnalysis,
@@ -82,6 +92,7 @@ from .schedule_service import (
 )
 from .schemas import (
     AnalysisOutput,
+    AnalyticsSummaryOutput,
     CalendarCreate,
     CalendarOutput,
     CalendarSlotOutput,
@@ -89,13 +100,22 @@ from .schemas import (
     ConfirmImportRequest,
     ContentIdeaCreate,
     ContentIdeaOutput,
+    CsvImportOutput,
     DecisionRequest,
+    ExperimentCreate,
+    ExperimentOutput,
     GeneratedDraft,
     GeneratedSuggestion,
+    HistoricalPostCreate,
+    HistoricalPostOutput,
     ImportResponse,
     ManualImportRequest,
     MemoryRevisionOutput,
+    MetricSnapshotCreate,
+    MetricSnapshotOutput,
     PostEditRequest,
+    PredictionCreate,
+    PredictionOutput,
     PreferenceOutput,
     PreferenceUpdate,
     PrimaryDraftOutput,
@@ -142,6 +162,49 @@ def publish_action_output(item: PublishAction) -> PublishActionOutput:
 
 def preference_output(item: PreferenceRule) -> PreferenceOutput:
     return PreferenceOutput(id=item.id, category=item.category, instruction=item.instruction, evidence_count=item.evidence_count, active=item.active, version=item.version, updated_at=item.updated_at)
+
+
+def experiment_output(item: Experiment) -> ExperimentOutput:
+    return ExperimentOutput(id=item.id, name=item.name, hypothesis=item.hypothesis, variable=item.variable, status=item.status, created_at=item.created_at)
+
+
+def metric_output(item: MetricSnapshot) -> MetricSnapshotOutput:
+    return MetricSnapshotOutput(
+        id=item.id,
+        post_revision_id=item.post_revision_id,
+        observed_at=item.observed_at,
+        window_hours=item.window_hours,
+        impressions=item.impressions,
+        reactions=item.reactions,
+        comments=item.comments,
+        reposts=item.reposts,
+        follower_delta=item.follower_delta,
+        clicks=item.clicks,
+        baseline=item.baseline,
+        experiment_id=item.experiment_id,
+        source=item.source,
+        engagement_rate=engagement_rate(item),
+        imported_at=item.imported_at,
+    )
+
+
+def prediction_output(item: Prediction) -> PredictionOutput:
+    return PredictionOutput(
+        id=item.id,
+        post_revision_id=item.post_revision_id,
+        target_window_hours=item.target_window_hours,
+        basis=item.basis,
+        bucket=item.bucket,
+        expected_engagement_rate=item.expected_engagement_rate,
+        interval=(item.interval_low, item.interval_high),
+        factors=item.factors,
+        recommended_change=item.recommended_change,
+        limitations=item.limitations,
+        model_version=item.model_version,
+        actual_engagement_rate=item.actual_engagement_rate,
+        absolute_error=item.absolute_error,
+        created_at=item.created_at,
+    )
 
 
 def voice_profile_output(db: Session, profile: VoiceProfile) -> VoiceProfileOutput:
@@ -657,19 +720,20 @@ def list_memory_revisions(db: Session = Depends(get_db)):
             .order_by(Review.created_at.desc())
             .limit(1)
         ).first()
-        if approval is None:
+        if approval is None and post.state != "PUBLISHED":
             continue
         items.append(
             MemoryRevisionOutput(
                 revision_id=revision.id,
                 post_id=post.id,
+                state=post.state,
                 revision_number=revision.revision_number,
                 pillar=idea.pillar,
                 topic=idea.topic,
                 taxonomy_version=revision.taxonomy_version,
                 embedding_version=embedding.embedding_version,
                 features=structural_features(revision),
-                approved_at=approval.created_at,
+                approved_at=approval.created_at if approval else (post.published_at or revision.created_at),
             )
         )
     return items
@@ -789,6 +853,7 @@ def confirm_publish(action_id: str, body: PublishConfirmation, db: Session = Dep
     action.published_at = body.published_at or datetime.now(UTC)
     schedule, post = db.get(PostSchedule, action.schedule_id), db.get(Post, action.post_id)
     schedule.status, post.state = "COMPLETED", "PUBLISHED"
+    post.published_at = action.published_at
     revision = db.get(PostRevision, action.revision_id)
     upsert_memory_status(db, revision, eligible=True, reason="PUBLISHED_REVISION")
     add_outbox(db, "post.published", post.id, f"published:{action.id}", {"post_id": post.id, "revision_id": action.revision_id, "publish_action_id": action.id})
@@ -830,6 +895,160 @@ def update_preference(preference_id: str, body: PreferenceUpdate, db: Session = 
     db.commit()
     db.refresh(item)
     return preference_output(item)
+
+
+@router.post("/historical-posts", response_model=HistoricalPostOutput, status_code=201)
+def create_historical_post(body: HistoricalPostCreate, db: Session = Depends(get_db)):
+    if body.published_at.tzinfo is None:
+        raise HTTPException(422, "published_at must include a timezone")
+    if body.published_at.astimezone(UTC) > datetime.now(UTC):
+        raise HTTPException(422, "published_at cannot be in the future")
+    voice = db.scalars(
+        select(VoiceProfile)
+        .where(VoiceProfile.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+        .order_by(VoiceProfile.version.desc())
+        .limit(1)
+    ).first()
+    if not voice:
+        raise HTTPException(409, "Configure a voice profile before importing an owned post")
+    if body.pillar not in voice.content_pillars:
+        raise HTTPException(422, "Historical post pillar must use the current controlled taxonomy")
+    idea = ContentIdea(
+        id=str(uuid4()),
+        voice_profile_id=voice.id,
+        taxonomy_version=voice.taxonomy_version,
+        pillar=body.pillar,
+        topic=body.topic.strip(),
+        angle="User-confirmed historical post",
+        audience_intent="Baseline and first-party performance learning",
+        format="TEXT",
+    )
+    post = Post(id=str(uuid4()), content_idea_id=idea.id, state="PUBLISHED", published_at=body.published_at.astimezone(UTC))
+    content = "\n\n".join(part for part in (body.hook.strip(), body.body.strip(), body.cta.strip()) if part)
+    revision = PostRevision(
+        id=str(uuid4()),
+        post_id=post.id,
+        revision_number=1,
+        hook=body.hook.strip(),
+        body=body.body.strip(),
+        cta=body.cta.strip(),
+        content=content,
+        generation_provider="human",
+        generation_model="manual-historical-import",
+        generation_mode="human_edit",
+        prompt_version="historical-import@1",
+        taxonomy_version=voice.taxonomy_version,
+        retrieved_revision_ids=[],
+    )
+    db.add_all([idea, post, revision])
+    db.flush()
+    upsert_memory_status(db, revision, eligible=True, reason="PUBLISHED_REVISION")
+    db.commit()
+    return HistoricalPostOutput(
+        post_id=post.id,
+        revision_id=revision.id,
+        pillar=idea.pillar,
+        topic=idea.topic,
+        state="PUBLISHED",
+        published_at=post.published_at,
+    )
+
+
+@router.post("/experiments", response_model=ExperimentOutput, status_code=201)
+def create_experiment(body: ExperimentCreate, db: Session = Depends(get_db)):
+    item = Experiment(id=str(uuid4()), name=body.name.strip(), hypothesis=body.hypothesis.strip(), variable=body.variable.strip())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return experiment_output(item)
+
+
+@router.get("/experiments", response_model=list[ExperimentOutput])
+def list_experiments(db: Session = Depends(get_db)):
+    items = db.scalars(
+        select(Experiment)
+        .where(Experiment.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+        .order_by(Experiment.created_at.desc())
+    ).all()
+    return [experiment_output(item) for item in items]
+
+
+@router.post("/metric-snapshots", response_model=MetricSnapshotOutput, status_code=201)
+def create_metric_snapshot(body: MetricSnapshotCreate, db: Session = Depends(get_db)):
+    try:
+        item, _created = add_metric_snapshot(db, body.model_dump(), "MANUAL")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    db.commit()
+    db.refresh(item)
+    return metric_output(item)
+
+
+@router.post("/metric-snapshots/import-csv", response_model=CsvImportOutput)
+async def import_metric_csv(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    file = form.get("file")
+    if not file or not hasattr(file, "read"):
+        raise HTTPException(422, "Provide a multipart CSV file")
+    content = await file.read(1_000_001)
+    if len(content) > 1_000_000:
+        raise HTTPException(413, "CSV exceeds the 1 MB personal-mode limit")
+    try:
+        rows, errors = parse_csv_rows(content)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    created, duplicates, snapshots = 0, 0, []
+    for position, row in enumerate(rows, start=2):
+        try:
+            item, was_created = add_metric_snapshot(db, row, "CSV")
+            created += int(was_created)
+            duplicates += int(not was_created)
+            snapshots.append(metric_output(item))
+        except ValueError as exc:
+            errors.append(f"Row {position}: {exc}")
+    db.commit()
+    return CsvImportOutput(created=created, duplicates=duplicates, errors=errors, snapshots=snapshots)
+
+
+@router.get("/metric-snapshots", response_model=list[MetricSnapshotOutput])
+def list_metric_snapshots(
+    window_hours: int | None = Query(default=None, ge=1, le=8_760),
+    db: Session = Depends(get_db),
+):
+    query = select(MetricSnapshot).where(MetricSnapshot.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+    if window_hours is not None:
+        query = query.where(MetricSnapshot.window_hours == window_hours)
+    items = db.scalars(query.order_by(MetricSnapshot.observed_at.desc())).all()
+    return [metric_output(item) for item in items]
+
+
+@router.get("/analytics/summary", response_model=AnalyticsSummaryOutput)
+def get_analytics_summary(
+    window_hours: int = Query(default=168, ge=1, le=8_760),
+    db: Session = Depends(get_db),
+):
+    return AnalyticsSummaryOutput(**analytics_summary(db, window_hours))
+
+
+@router.post("/predictions", response_model=PredictionOutput, status_code=201)
+def predict_post(body: PredictionCreate, db: Session = Depends(get_db)):
+    revision = db.get(PostRevision, body.post_revision_id)
+    if not revision or revision.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Post revision not found")
+    item = create_prediction(db, revision, body.target_window_hours)
+    db.commit()
+    db.refresh(item)
+    return prediction_output(item)
+
+
+@router.get("/predictions", response_model=list[PredictionOutput])
+def list_predictions(db: Session = Depends(get_db)):
+    items = db.scalars(
+        select(Prediction)
+        .where(Prediction.workspace_id == BOOTSTRAP_WORKSPACE_ID)
+        .order_by(Prediction.created_at.desc())
+    ).all()
+    return [prediction_output(item) for item in items]
 
 
 @router.post("/content-ideas", response_model=ContentIdeaOutput, status_code=201)

@@ -217,6 +217,7 @@ class Post(Base):
     )
     content_idea_id: Mapped[str] = mapped_column(ForeignKey("content_ideas.id"), unique=True)
     state: Mapped[str] = mapped_column(String(32), default="DRAFT")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -469,6 +470,70 @@ class PreferenceRule(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Experiment(Base):
+    __tablename__ = "experiments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    hypothesis: Mapped[str] = mapped_column(Text)
+    variable: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MetricSnapshot(Base):
+    __tablename__ = "metric_snapshots"
+    __table_args__ = (UniqueConstraint("workspace_id", "dedupe_key"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True)
+    post_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"), index=True)
+    experiment_id: Mapped[str | None] = mapped_column(ForeignKey("experiments.id"), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_hours: Mapped[int] = mapped_column(Integer)
+    impressions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reactions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    comments: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reposts: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    follower_delta: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    clicks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    baseline: Mapped[bool] = mapped_column(Boolean, default=False)
+    source: Mapped[str] = mapped_column(String(32))
+    dedupe_key: Mapped[str] = mapped_column(String(64))
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FeatureSnapshot(Base):
+    __tablename__ = "feature_snapshots"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True)
+    post_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"), index=True)
+    feature_version: Mapped[str] = mapped_column(String(40))
+    features: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), default=BOOTSTRAP_WORKSPACE_ID, index=True)
+    post_revision_id: Mapped[str] = mapped_column(ForeignKey("post_revisions.id"), index=True)
+    feature_snapshot_id: Mapped[str] = mapped_column(ForeignKey("feature_snapshots.id"))
+    target_window_hours: Mapped[int] = mapped_column(Integer)
+    basis: Mapped[str] = mapped_column(String(24))
+    bucket: Mapped[str] = mapped_column(String(16))
+    expected_engagement_rate: Mapped[float] = mapped_column(Float)
+    interval_low: Mapped[float] = mapped_column(Float)
+    interval_high: Mapped[float] = mapped_column(Float)
+    factors: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    recommended_change: Mapped[str | None] = mapped_column(Text, nullable=True)
+    limitations: Mapped[list[str]] = mapped_column(JSON)
+    model_version: Mapped[str] = mapped_column(String(40))
+    actual_engagement_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    absolute_error: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class AiBudgetPeriod(Base):

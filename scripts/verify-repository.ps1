@@ -20,8 +20,10 @@ try {
         'package.json',
         'pnpm-lock.yaml',
         'apps/api/liproser/main.py',
+        'apps/api/liproser/analytics_service.py',
         'apps/web/app/page.tsx',
-        'migrations/versions/0001_v01_profile_optimizer.py'
+        'migrations/versions/0001_v01_profile_optimizer.py',
+        'migrations/versions/0006_v04_analytics_prediction.py'
     )
 
     foreach ($requiredFile in $requiredFiles) {

@@ -312,6 +312,7 @@ class RetrievalReferenceOutput(BaseModel):
 class MemoryRevisionOutput(BaseModel):
     revision_id: str
     post_id: str
+    state: str
     revision_number: int
     pillar: str
     topic: str
@@ -438,3 +439,104 @@ class PreferenceOutput(BaseModel):
 
 class PreferenceUpdate(BaseModel):
     active: bool
+
+
+class ExperimentCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=120)
+    hypothesis: str = Field(min_length=10, max_length=1_000)
+    variable: str = Field(min_length=2, max_length=80)
+
+
+class ExperimentOutput(BaseModel):
+    id: str
+    name: str
+    hypothesis: str
+    variable: str
+    status: Literal["ACTIVE", "COMPLETED"]
+    created_at: datetime
+
+
+class HistoricalPostCreate(BaseModel):
+    pillar: str = Field(min_length=2, max_length=100)
+    topic: str = Field(min_length=3, max_length=300)
+    hook: str = Field(min_length=3, max_length=1_000)
+    body: str = Field(min_length=3, max_length=20_000)
+    cta: str = Field(default="", max_length=2_000)
+    published_at: datetime
+    content_is_user_owned: Literal[True]
+
+
+class HistoricalPostOutput(BaseModel):
+    post_id: str
+    revision_id: str
+    pillar: str
+    topic: str
+    state: Literal["PUBLISHED"]
+    published_at: datetime
+
+
+class MetricSnapshotCreate(BaseModel):
+    post_revision_id: str
+    observed_at: datetime
+    window_hours: int = Field(ge=1, le=8_760)
+    impressions: int | None = Field(default=None, ge=0)
+    reactions: int | None = Field(default=None, ge=0)
+    comments: int | None = Field(default=None, ge=0)
+    reposts: int | None = Field(default=None, ge=0)
+    follower_delta: int | None = None
+    clicks: int | None = Field(default=None, ge=0)
+    baseline: bool = False
+    experiment_id: str | None = None
+
+
+class MetricSnapshotOutput(MetricSnapshotCreate):
+    id: str
+    source: Literal["MANUAL", "CSV", "LINKEDIN_OFFICIAL_API"]
+    engagement_rate: float | None
+    imported_at: datetime
+
+
+class CsvImportOutput(BaseModel):
+    created: int
+    duplicates: int
+    errors: list[str]
+    snapshots: list[MetricSnapshotOutput]
+
+
+class AnalyticsSummaryOutput(BaseModel):
+    snapshot_count: int
+    comparable_post_count: int
+    baseline_engagement_rate: float | None
+    current_engagement_rate: float | None
+    lift_percent: float | None
+    best_pillars: list[dict[str, Any]]
+    calibration_count: int
+    mean_absolute_error: float | None
+
+
+class PredictionCreate(BaseModel):
+    post_revision_id: str
+    target_window_hours: int = Field(default=168, ge=1, le=720)
+
+
+class PredictionFactorOutput(BaseModel):
+    feature: str
+    impact: Literal["POSITIVE", "NEUTRAL", "NEGATIVE"]
+    explanation: str
+
+
+class PredictionOutput(BaseModel):
+    id: str
+    post_revision_id: str
+    target_window_hours: int
+    basis: Literal["DOMAIN_PRIOR", "BLENDED", "PERSONALIZED"]
+    bucket: Literal["LOW", "MEDIUM", "HIGH"]
+    expected_engagement_rate: float
+    interval: tuple[float, float]
+    factors: list[PredictionFactorOutput]
+    recommended_change: str | None
+    limitations: list[str]
+    model_version: str
+    actual_engagement_rate: float | None
+    absolute_error: float | None
+    created_at: datetime

@@ -88,7 +88,7 @@ def eligible_revisions(
             RevisionMemoryEligibility.revision_id == PostRevision.id,
         )
         .join(RevisionEmbedding, RevisionEmbedding.revision_id == PostRevision.id)
-        .join(
+        .outerjoin(
             Review,
             (Review.revision_id == PostRevision.id) & (Review.action == "APPROVE"),
         )
@@ -101,6 +101,7 @@ def eligible_revisions(
                 and_(
                     Post.state.in_(["APPROVED", "SCHEDULED", "PUBLISH_ACTION_REQUIRED"]),
                     PostRevision.revision_number == latest_revision_number,
+                    Review.id.is_not(None),
                 ),
             ),
         )

@@ -2,7 +2,7 @@
 
 Liproser is a personal-first AI system for improving a LinkedIn profile and building a repeatable, evidence-aware content workflow. It starts as the founder's private operating system; capabilities are generalized into SaaS features only after sustained personal use demonstrates value.
 
-> **Current status:** `v0.1`, all `v0.2A–D` slices, and `v0.3` are implemented for local personal use: profile optimization, grounded content review, first-party memory, calendar scheduling, manual publish reminders, and reversible feedback learning. Manual analytics and explainable prediction are next in `v0.4`.
+> **Current status:** `v0.1` through `v0.4` are implemented for local personal use: profile optimization, grounded content review, first-party memory, calendar scheduling, manual publishing, comparable analytics, and explainable prediction. Personal validation toward `v1` is next.
 
 ## What Liproser will do
 
@@ -133,6 +133,18 @@ The memory slice stores a versioned local hash embedding for an exact approved r
 ## Implemented `v0.3` slice
 
 The workflow now creates balanced timezone-aware calendar slots while respecting quiet days, schedules only an exact approved revision, and stores both intended local time and resolved UTC time. Scheduling and approval events commit through a transactional outbox. A Redis/Arq worker dispatches deferred reminders with idempotent job receipts and bounded dead-letter handling. The manual publish action exposes formatted copy but requires the owner to publish and explicitly confirm the URL/time; editing beforehand cancels the schedule and invalidates the action. Published immutable revisions stay in first-party memory. Repeated structured feedback creates an inspectable preference after two matching signals, and each rule can be disabled or re-enabled. No LinkedIn automation is used.
+
+## Implemented `v0.4` slice
+
+The analytics slice accepts manual metric snapshots and bounded UTF-8 CSV imports for user-owned published revisions. An explicit historical-post form builds a pre-Liproser baseline without scraping; imported posts require ownership confirmation and a controlled content pillar. Comparisons use matching observation windows and deduplicate repeated imports. Experiment tags capture one variable and hypothesis.
+
+Predictions use versioned deterministic features and disclose `DOMAIN_PRIOR`, `BLENDED`, or `PERSONALIZED` basis according to the number of distinct comparable personal posts. Every result includes an engagement-rate interval, three contributing factors, limitations, and at most one recommended edit. Actual matching-window outcomes calculate prediction error; estimates are guidance, not guarantees or causal claims.
+
+CSV files use this header (maximum 500 rows and 1 MB):
+
+```csv
+post_revision_id,observed_at,window_hours,impressions,reactions,comments,reposts,follower_delta,clicks,baseline,experiment_id
+```
 
 ## License
 

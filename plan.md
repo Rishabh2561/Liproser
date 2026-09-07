@@ -78,7 +78,7 @@ The personal release excludes public signup, teams, billing, cross-customer inte
 
 ### Analytics and prediction (`v0.4`)
 
-- Import metrics manually or from CSV with source and observation window; deduplicate snapshots.
+- Import user-owned historical posts explicitly, then attach metrics manually or from CSV with source and observation window; deduplicate snapshots without scraping.
 - Compare pillars, formats, times, and trends with the user's pre-product/historical baseline.
 - Capture experiment tags and vary one element by default to support interpretation.
 - Start with domain priors, blend as personal sample size grows, and expose the data basis.

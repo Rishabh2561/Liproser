@@ -138,7 +138,7 @@ All routes require server-resolved workspace scope, rate limits, request IDs, an
 | `v0.2C` implemented | `POST /posts/{id}/submit-review`, `/posts/{id}/reviews`, `/posts/{id}/edits`, and `/posts/{id}/regenerations` with exact-revision guards |
 | `v0.2D` implemented | `/memory/revisions` plus first-party retrieval and originality operations |
 | `v0.3` implemented | `/calendars`, `/schedules`, `/publish-actions`, `/feedback/preferences` |
-| `v0.4` | `/metric-snapshots`, `/analytics`, `/predictions` |
+| `v0.4` implemented | `/historical-posts`, `/experiments`, `/metric-snapshots`, `/analytics`, `/predictions` |
 | Capability gated | `/integrations/linkedin`, `/integrations/linkedin/capabilities`, `/integrations/linkedin/syncs` |
 | `SaaS MVP` only | `/billing`, `/entitlements`, `/memberships`, administrative recovery |
 

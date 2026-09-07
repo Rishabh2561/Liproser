@@ -88,7 +88,7 @@ test("v0.2C preserves exact-revision human review authority", () => {
     assert.match(page, new RegExp(expected));
   }
   assert.match(page, /Only this exact revision is approved/);
-  assert.match(page, /Scheduling remains unavailable until v0\.3/);
+  assert.match(page, /It can now be scheduled in the calendar/);
   assert.doesNotMatch(page, /auto.?approve/i);
 });
 
@@ -106,4 +106,14 @@ test("v0.3 exposes deterministic calendar and manual publication controls", () =
   for (const expected of ["CALENDAR & REMINDERS · v0.3","Plan calendar","Schedule approved revision","Prepare copy & publish now","Copy formatted post","I published this exact revision","Learned preferences","No automatic LinkedIn action occurs"]){assert.match(page,new RegExp(expected));}
   assert.match(page,/Created only after two matching feedback signals/);
   assert.doesNotMatch(page,/auto.?publish/i);
+});
+
+test("v0.4 exposes owned-history analytics and explainable prediction", () => {
+  assert.match(page, /ANALYTICS & PREDICTION · v0\.4/);
+  assert.match(page, /Build a pre-Liproser baseline without scraping/);
+  assert.match(page, /I confirm this post is mine or I am authorized to use it privately/);
+  assert.match(page, /Import analytics CSV/);
+  assert.match(page, /Use the same observation window/);
+  assert.match(page, /Predict selected revision/);
+  assert.match(page, /Treat it as guidance, never a guarantee/);
 });
