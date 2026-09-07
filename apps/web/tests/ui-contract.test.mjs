@@ -101,3 +101,9 @@ test("v0.2D exposes eligible first-party memory and retrieval provenance", () =>
   assert.match(page, /\/v1\/memory\/revisions/);
   assert.doesNotMatch(page, /scrape|swipe file/i);
 });
+
+test("v0.3 exposes deterministic calendar and manual publication controls", () => {
+  for (const expected of ["CALENDAR & REMINDERS · v0.3","Plan calendar","Schedule approved revision","Prepare copy & publish now","Copy formatted post","I published this exact revision","Learned preferences","No automatic LinkedIn action occurs"]){assert.match(page,new RegExp(expected));}
+  assert.match(page,/Created only after two matching feedback signals/);
+  assert.doesNotMatch(page,/auto.?publish/i);
+});

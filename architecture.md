@@ -29,11 +29,10 @@ No LinkedIn crawler, DOM integration, browser automation, unofficial API, or thi
 
 ```text
 apps/web/                 Next.js dashboard and generated API client
-apps/api/                 FastAPI routes, composition, migrations
+apps/api/                 FastAPI routes, composition, and the v0.3 Arq worker
 packages/domain/          Python entities, value objects, policies, state machines
 packages/application/     Use cases, ports, authorization, outbox
 packages/infrastructure/  PostgreSQL, filesystem, provider and LinkedIn adapters
-workers/                  Added in v0.3 for Arq jobs
 schemas/                  JSON Schema, OpenAPI, event contracts
 evals/                    Synthetic/consented frozen fixtures
 docs/                     ADRs, runtime-agent design, operations
@@ -102,7 +101,6 @@ stateDiagram-v2
     IN_REVIEW --> APPROVED: user approves exact revision
     CHANGES_REQUESTED --> DRAFT: validated new revision
     APPROVED --> SCHEDULED: user schedules
-    APPROVED --> PUBLISH_ACTION_REQUIRED: user chooses publish now
     SCHEDULED --> PUBLISH_ACTION_REQUIRED: reminder due
     PUBLISH_ACTION_REQUIRED --> PUBLISHING: official adapter only
     PUBLISH_ACTION_REQUIRED --> PUBLISHED: user confirms manual publish
@@ -138,8 +136,8 @@ All routes require server-resolved workspace scope, rate limits, request IDs, an
 | `v0.2A` implemented | `POST /voice-profiles`, `GET /voice-profiles/current`, `GET /taxonomy/current` |
 | `v0.2B` implemented | `POST/GET /content-ideas`, `POST /content-ideas/{id}/primary-draft`, `GET /posts/{id}` with evidence and claim provenance |
 | `v0.2C` implemented | `POST /posts/{id}/submit-review`, `/posts/{id}/reviews`, `/posts/{id}/edits`, and `/posts/{id}/regenerations` with exact-revision guards |
-| `v0.2D` | `/memory/revisions` plus first-party retrieval and originality operations |
-| `v0.3` | `/calendars`, `/schedules`, `/publish-actions`, `/feedback` |
+| `v0.2D` implemented | `/memory/revisions` plus first-party retrieval and originality operations |
+| `v0.3` implemented | `/calendars`, `/schedules`, `/publish-actions`, `/feedback/preferences` |
 | `v0.4` | `/metric-snapshots`, `/analytics`, `/predictions` |
 | Capability gated | `/integrations/linkedin`, `/integrations/linkedin/capabilities`, `/integrations/linkedin/syncs` |
 | `SaaS MVP` only | `/billing`, `/entitlements`, `/memberships`, administrative recovery |
@@ -148,7 +146,7 @@ All routes require server-resolved workspace scope, rate limits, request IDs, an
 
 ```typescript
 type ReviewAction = "SUBMIT" | "EDIT" | "REQUEST_CHANGES" | "REGENERATE" | "REJECT" | "APPROVE";
-type PublishMethod = "MANUAL_COPY" | "LINKEDIN_OFFICIAL_API";
+type PublishMethod = "COPY_REMINDER" | "LINKEDIN_OFFICIAL_API";
 type PredictionBasis = "DOMAIN_PRIOR" | "BLENDED" | "PERSONALIZED";
 
 interface EditDelta { fromRevisionId: string; toRevisionId: string; operations: DeltaOp[]; }

@@ -6,7 +6,7 @@ import re
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from .database import (
@@ -96,8 +96,13 @@ def eligible_revisions(
             RevisionMemoryEligibility.workspace_id == BOOTSTRAP_WORKSPACE_ID,
             RevisionMemoryEligibility.eligible.is_(True),
             Post.workspace_id == BOOTSTRAP_WORKSPACE_ID,
-            Post.state == "APPROVED",
-            PostRevision.revision_number == latest_revision_number,
+            or_(
+                RevisionMemoryEligibility.reason == "PUBLISHED_REVISION",
+                and_(
+                    Post.state.in_(["APPROVED", "SCHEDULED", "PUBLISH_ACTION_REQUIRED"]),
+                    PostRevision.revision_number == latest_revision_number,
+                ),
+            ),
         )
     )
     if taxonomy_version:

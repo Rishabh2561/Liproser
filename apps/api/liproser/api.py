@@ -23,16 +23,21 @@ from .content_service import (
 from .database import (
     BOOTSTRAP_WORKSPACE_ID,
     AiBudgetPeriod,
+    CalendarSlot,
     ClaimAssessment,
+    ContentCalendar,
     ContentIdea,
     EditDelta,
     Post,
     PostRevision,
+    PostSchedule,
+    PreferenceRule,
     Profile,
     ProfileAnalysis,
     ProfileImport,
     ProfileSuggestion,
     ProviderConfiguration,
+    PublishAction,
     Review,
     RevisionCheck,
     RevisionRetrieval,
@@ -66,8 +71,20 @@ from .providers import (
     provider_secret_source,
 )
 from .runtime_secrets import clear_session_secret, set_session_secret
+from .schedule_service import (
+    add_outbox,
+    build_calendar,
+    create_publish_action,
+    exact_approval_valid,
+    record_feedback,
+    resolve_local,
+    synthesize_preferences,
+)
 from .schemas import (
     AnalysisOutput,
+    CalendarCreate,
+    CalendarOutput,
+    CalendarSlotOutput,
     ClaimAssessmentOutput,
     ConfirmImportRequest,
     ContentIdeaCreate,
@@ -79,17 +96,25 @@ from .schemas import (
     ManualImportRequest,
     MemoryRevisionOutput,
     PostEditRequest,
+    PreferenceOutput,
+    PreferenceUpdate,
     PrimaryDraftOutput,
     ProfileSections,
     ProviderCheckRequest,
     ProviderCheckResponse,
     ProviderSecretRequest,
+    PublishActionOutput,
+    PublishConfirmation,
+    PublishFailure,
+    PublishNowRequest,
     RegenerationRequest,
     RetrievalReferenceOutput,
     ReviewDecisionRequest,
     ReviewOutput,
     ReviewSubmissionRequest,
     RevisionCheckOutput,
+    ScheduleCreate,
+    ScheduleOutput,
     SourceReferenceOutput,
     SuggestionOutput,
     TaxonomyOutput,
@@ -100,6 +125,23 @@ from .schemas import (
 from .storage import LocalStorage
 
 router = APIRouter(prefix="/v1")
+
+
+def calendar_output(db: Session, calendar: ContentCalendar) -> CalendarOutput:
+    slots = db.scalars(select(CalendarSlot).where(CalendarSlot.calendar_id == calendar.id).order_by(CalendarSlot.position)).all()
+    return CalendarOutput(id=calendar.id, start_date=calendar.start_date, weeks=calendar.weeks, cadence_per_week=calendar.cadence_per_week, timezone=calendar.timezone, quiet_days=calendar.quiet_days, slots=[CalendarSlotOutput(id=item.id, position=item.position, pillar=item.pillar, intended_local_at=item.intended_local_at, resolved_utc_at=item.resolved_utc_at, status=item.status) for item in slots], created_at=calendar.created_at)
+
+
+def schedule_output(item: PostSchedule) -> ScheduleOutput:
+    return ScheduleOutput(id=item.id, post_id=item.post_id, revision_id=item.revision_id, calendar_slot_id=item.calendar_slot_id, timezone=item.timezone, intended_local_at=item.intended_local_at, resolved_utc_at=item.resolved_utc_at, status=item.status, created_at=item.created_at)
+
+
+def publish_action_output(item: PublishAction) -> PublishActionOutput:
+    return PublishActionOutput(id=item.id, schedule_id=item.schedule_id, post_id=item.post_id, revision_id=item.revision_id, method=item.method, state=item.state, formatted_content=item.formatted_content, published_url=item.published_url, published_at=item.published_at, failure_reason=item.failure_reason)
+
+
+def preference_output(item: PreferenceRule) -> PreferenceOutput:
+    return PreferenceOutput(id=item.id, category=item.category, instruction=item.instruction, evidence_count=item.evidence_count, active=item.active, version=item.version, updated_at=item.updated_at)
 
 
 def voice_profile_output(db: Session, profile: VoiceProfile) -> VoiceProfileOutput:
@@ -633,6 +675,163 @@ def list_memory_revisions(db: Session = Depends(get_db)):
     return items
 
 
+@router.post("/calendars", response_model=CalendarOutput, status_code=201)
+def create_calendar(body: CalendarCreate, db: Session = Depends(get_db)):
+    voice = db.scalars(select(VoiceProfile).where(VoiceProfile.workspace_id == BOOTSTRAP_WORKSPACE_ID).order_by(VoiceProfile.version.desc()).limit(1)).first()
+    if not voice:
+        raise HTTPException(409, "Configure a voice profile before planning a calendar")
+    try:
+        calendar = build_calendar(db, voice, body.start_date, body.weeks, body.cadence_per_week, body.timezone, list(body.quiet_days))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    db.commit()
+    db.refresh(calendar)
+    return calendar_output(db, calendar)
+
+
+@router.get("/calendars/current", response_model=CalendarOutput)
+def current_calendar(db: Session = Depends(get_db)):
+    calendar = db.scalars(select(ContentCalendar).where(ContentCalendar.workspace_id == BOOTSTRAP_WORKSPACE_ID).order_by(ContentCalendar.created_at.desc(), ContentCalendar.id.desc()).limit(1)).first()
+    if not calendar:
+        raise HTTPException(404, "No content calendar has been planned")
+    return calendar_output(db, calendar)
+
+
+@router.post("/posts/{post_id}/schedules", response_model=ScheduleOutput, status_code=201)
+def create_schedule(post_id: str, body: ScheduleCreate, db: Session = Depends(get_db)):
+    existing = db.scalar(select(PostSchedule).where(PostSchedule.workspace_id == BOOTSTRAP_WORKSPACE_ID, PostSchedule.idempotency_key == body.idempotency_key))
+    if existing:
+        expected_local = body.intended_local_at.isoformat(timespec="minutes")
+        if (
+            existing.post_id != post_id
+            or existing.revision_id != body.revision_id
+            or existing.calendar_slot_id != body.calendar_slot_id
+            or existing.timezone != body.timezone
+            or existing.intended_local_at != expected_local
+        ):
+            raise HTTPException(409, "Idempotency key belongs to a different schedule request")
+        return schedule_output(existing)
+    post, revision = db.get(Post, post_id), db.get(PostRevision, body.revision_id)
+    if not post or not revision or revision.post_id != post_id or not exact_approval_valid(db, post, revision):
+        raise HTTPException(409, "Only the exact currently approved revision can be scheduled")
+    try:
+        local_text, utc_value = resolve_local(body.intended_local_at, body.timezone, body.dst_fold)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if utc_value <= datetime.now(UTC):
+        raise HTTPException(422, "Schedule time must be in the future")
+    slot = db.get(CalendarSlot, body.calendar_slot_id) if body.calendar_slot_id else None
+    if body.calendar_slot_id and (not slot or slot.workspace_id != BOOTSTRAP_WORKSPACE_ID or slot.status != "PLANNED"):
+        raise HTTPException(409, "Calendar slot is unavailable")
+    if slot:
+        slot_utc = slot.resolved_utc_at.replace(tzinfo=UTC) if slot.resolved_utc_at.tzinfo is None else slot.resolved_utc_at
+        if slot_utc != utc_value or body.timezone != db.get(ContentCalendar, slot.calendar_id).timezone:
+            raise HTTPException(422, "Schedule must match the selected calendar slot")
+        slot.status = "ASSIGNED"
+    schedule = PostSchedule(id=str(uuid4()), post_id=post.id, revision_id=revision.id, calendar_slot_id=body.calendar_slot_id, timezone=body.timezone, intended_local_at=local_text, resolved_utc_at=utc_value, status="ACTIVE", idempotency_key=body.idempotency_key)
+    db.add(schedule)
+    post.state = "SCHEDULED"
+    add_outbox(db, "post.scheduled", schedule.id, f"schedule:{schedule.id}", {"schedule_id": schedule.id, "revision_id": revision.id}, utc_value)
+    db.commit()
+    db.refresh(schedule)
+    return schedule_output(schedule)
+
+
+@router.get("/schedules", response_model=list[ScheduleOutput])
+def list_schedules(db: Session = Depends(get_db)):
+    return [schedule_output(item) for item in db.scalars(select(PostSchedule).where(PostSchedule.workspace_id == BOOTSTRAP_WORKSPACE_ID).order_by(PostSchedule.resolved_utc_at)).all()]
+
+
+@router.post("/schedules/{schedule_id}/publish-now", response_model=PublishActionOutput)
+def publish_now(schedule_id: str, body: PublishNowRequest, db: Session = Depends(get_db)):
+    schedule = db.get(PostSchedule, schedule_id)
+    if not schedule or schedule.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Schedule not found")
+    if schedule.revision_id != body.revision_id or schedule.status not in {"ACTIVE", "REMINDER_DUE"}:
+        raise HTTPException(409, "The scheduled exact revision is no longer actionable")
+    try:
+        action = create_publish_action(db, schedule, body.idempotency_key)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    db.commit()
+    db.refresh(action)
+    return publish_action_output(action)
+
+
+@router.get("/publish-actions/{action_id}", response_model=PublishActionOutput)
+def get_publish_action(action_id: str, db: Session = Depends(get_db)):
+    action = db.get(PublishAction, action_id)
+    if not action or action.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Publish action not found")
+    return publish_action_output(action)
+
+
+@router.get("/publish-actions", response_model=list[PublishActionOutput])
+def list_publish_actions(db: Session = Depends(get_db)):
+    return [publish_action_output(item) for item in db.scalars(select(PublishAction).where(PublishAction.workspace_id == BOOTSTRAP_WORKSPACE_ID).order_by(PublishAction.created_at.desc())).all()]
+
+
+@router.post("/publish-actions/{action_id}/confirm", response_model=PublishActionOutput)
+def confirm_publish(action_id: str, body: PublishConfirmation, db: Session = Depends(get_db)):
+    action = db.get(PublishAction, action_id)
+    if not action or action.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Publish action not found")
+    if action.state == "PUBLISHED":
+        if body.published_url and body.published_url != action.published_url:
+            raise HTTPException(409, "Publication was already confirmed with different details")
+        return publish_action_output(action)
+    if action.state != "ACTION_REQUIRED":
+        raise HTTPException(409, "Publication action is no longer confirmable")
+    if body.published_url and not body.published_url.startswith(("https://", "http://")):
+        raise HTTPException(422, "published_url must be an HTTP URL")
+    action.state = "PUBLISHED"
+    action.published_url = body.published_url
+    action.published_at = body.published_at or datetime.now(UTC)
+    schedule, post = db.get(PostSchedule, action.schedule_id), db.get(Post, action.post_id)
+    schedule.status, post.state = "COMPLETED", "PUBLISHED"
+    revision = db.get(PostRevision, action.revision_id)
+    upsert_memory_status(db, revision, eligible=True, reason="PUBLISHED_REVISION")
+    add_outbox(db, "post.published", post.id, f"published:{action.id}", {"post_id": post.id, "revision_id": action.revision_id, "publish_action_id": action.id})
+    db.commit()
+    db.refresh(action)
+    return publish_action_output(action)
+
+
+@router.post("/publish-actions/{action_id}/fail", response_model=PublishActionOutput)
+def fail_publish(action_id: str, body: PublishFailure, db: Session = Depends(get_db)):
+    action = db.get(PublishAction, action_id)
+    if not action or action.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Publish action not found")
+    if action.state != "ACTION_REQUIRED":
+        raise HTTPException(409, "Publication action is no longer active")
+    action.state = "FAILED"
+    action.failure_reason = body.reason
+    schedule, post = db.get(PostSchedule, action.schedule_id), db.get(Post, action.post_id)
+    schedule.status, post.state = "FAILED", "FAILED"
+    add_outbox(db, "publish.failed", action.id, f"publish-failed:{action.id}", {"publish_action_id": action.id})
+    db.commit()
+    db.refresh(action)
+    return publish_action_output(action)
+
+
+@router.get("/feedback/preferences", response_model=list[PreferenceOutput])
+def list_preferences(db: Session = Depends(get_db)):
+    return [preference_output(item) for item in db.scalars(select(PreferenceRule).where(PreferenceRule.workspace_id == BOOTSTRAP_WORKSPACE_ID).order_by(PreferenceRule.category)).all()]
+
+
+@router.patch("/feedback/preferences/{preference_id}", response_model=PreferenceOutput)
+def update_preference(preference_id: str, body: PreferenceUpdate, db: Session = Depends(get_db)):
+    item = db.get(PreferenceRule, preference_id)
+    if not item or item.workspace_id != BOOTSTRAP_WORKSPACE_ID:
+        raise HTTPException(404, "Preference not found")
+    item.active = body.active
+    item.version += 1
+    item.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(item)
+    return preference_output(item)
+
+
 @router.post("/content-ideas", response_model=ContentIdeaOutput, status_code=201)
 def create_content_idea(body: ContentIdeaCreate, db: Session = Depends(get_db)):
     voice = db.scalars(
@@ -852,6 +1051,7 @@ def decide_post_review(
             raise HTTPException(409, "Resolve blocking checks before approval")
         post.state = "APPROVED"
         upsert_memory_status(db, revision, eligible=True, reason="EXACT_APPROVAL_VALID")
+        add_outbox(db, "post.approved", post.id, f"approved:{revision.id}", {"post_id": post.id, "revision_id": revision.id})
     elif body.action == "REJECT":
         if not body.reason:
             raise HTTPException(422, "A rejection reason is required")
@@ -872,6 +1072,10 @@ def decide_post_review(
             claims_confirmed=body.claims_confirmed,
         )
     )
+    if body.action in {"REQUEST_CHANGES", "REJECT"}:
+        categories = list(body.categories) if body.categories else ["REJECT"]
+        record_feedback(db, post.id, revision.id, categories, body.reason or body.action)
+        synthesize_preferences(db)
     db.commit()
     db.refresh(post)
     return primary_draft_output(db, post, revision)
@@ -889,7 +1093,8 @@ def edit_post_revision(
     previous = require_current_revision(db, post, body.revision_id)
     if post.state == "REJECTED":
         raise HTTPException(409, "A rejected post is terminal")
-    upsert_memory_status(db, previous, eligible=False, reason="SUPERSEDED_UNPUBLISHED")
+    was_published = post.state == "PUBLISHED"
+    upsert_memory_status(db, previous, eligible=was_published, reason="PUBLISHED_REVISION" if was_published else "SUPERSEDED_UNPUBLISHED")
     values = {"hook": body.hook, "body": body.body, "cta": body.cta}
     operations = [
         {"field": field, "before": getattr(previous, field), "after": value}
@@ -898,6 +1103,17 @@ def edit_post_revision(
     ]
     if not operations:
         raise HTTPException(422, "Change at least one field before saving a new revision")
+    active_schedules = db.scalars(select(PostSchedule).where(PostSchedule.post_id == post.id, PostSchedule.status.in_(["ACTIVE", "REMINDER_DUE"]))).all()
+    for schedule in active_schedules:
+        schedule.status = "CANCELLED"
+        action = db.scalar(select(PublishAction).where(PublishAction.schedule_id == schedule.id, PublishAction.state == "ACTION_REQUIRED"))
+        if action:
+            action.state = "FAILED"
+        if schedule.calendar_slot_id:
+            slot = db.get(CalendarSlot, schedule.calendar_slot_id)
+            if slot:
+                slot.status = "PLANNED"
+        add_outbox(db, "schedule.cancelled", schedule.id, f"schedule-cancelled:{schedule.id}", {"schedule_id": schedule.id, "revision_id": previous.id})
     idea, voice, evidence, allowed_context = revision_context(db, post)
     claims = user_edit_claims([body.hook, body.body, body.cta], [item.statement for item in evidence])
     memory_references = retrieve_memory(
@@ -967,6 +1183,8 @@ def edit_post_revision(
             claims_confirmed=True,
         )
     )
+    record_feedback(db, post.id, revision.id, [f"EDIT_{item['field'].upper()}" for item in operations], "Human edited the approved or draft revision")
+    synthesize_preferences(db)
     post.state = "DRAFT"
     db.commit()
     db.refresh(post)

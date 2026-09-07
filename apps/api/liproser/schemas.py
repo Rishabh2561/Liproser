@@ -324,7 +324,7 @@ class MemoryRevisionOutput(BaseModel):
 class PrimaryDraftOutput(BaseModel):
     post_id: str
     revision_id: str
-    state: Literal["DRAFT", "IN_REVIEW", "CHANGES_REQUESTED", "REJECTED", "APPROVED"]
+    state: Literal["DRAFT", "IN_REVIEW", "CHANGES_REQUESTED", "REJECTED", "APPROVED", "SCHEDULED", "PUBLISH_ACTION_REQUIRED", "PUBLISHED", "FAILED"]
     revision_number: int
     hook: str
     body: str
@@ -345,3 +345,96 @@ class PrimaryDraftOutput(BaseModel):
     checks: list[RevisionCheckOutput]
     reviews: list[ReviewOutput]
     created_at: datetime
+
+
+Weekday = Literal["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+
+
+class CalendarCreate(BaseModel):
+    start_date: date
+    weeks: int = Field(default=4, ge=1, le=8)
+    cadence_per_week: int = Field(default=3, ge=1, le=7)
+    timezone: str = Field(min_length=1, max_length=80)
+    quiet_days: list[Weekday] = Field(default_factory=lambda: ["SATURDAY", "SUNDAY"], max_length=6)
+
+
+class CalendarSlotOutput(BaseModel):
+    id: str
+    position: int
+    pillar: str
+    intended_local_at: str
+    resolved_utc_at: datetime
+    status: Literal["PLANNED", "ASSIGNED", "CANCELLED"]
+
+
+class CalendarOutput(BaseModel):
+    id: str
+    start_date: date
+    weeks: int
+    cadence_per_week: int
+    timezone: str
+    quiet_days: list[Weekday]
+    slots: list[CalendarSlotOutput]
+    created_at: datetime
+
+
+class ScheduleCreate(BaseModel):
+    revision_id: str
+    intended_local_at: datetime
+    timezone: str = Field(min_length=1, max_length=80)
+    calendar_slot_id: str | None = None
+    idempotency_key: str = Field(min_length=8, max_length=100)
+    dst_fold: Literal[0, 1] | None = None
+
+
+class ScheduleOutput(BaseModel):
+    id: str
+    post_id: str
+    revision_id: str
+    calendar_slot_id: str | None
+    timezone: str
+    intended_local_at: str
+    resolved_utc_at: datetime
+    status: Literal["ACTIVE", "REMINDER_DUE", "COMPLETED", "CANCELLED", "FAILED"]
+    created_at: datetime
+
+
+class PublishNowRequest(BaseModel):
+    revision_id: str
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+
+class PublishActionOutput(BaseModel):
+    id: str
+    schedule_id: str
+    post_id: str
+    revision_id: str
+    method: Literal["COPY_REMINDER"]
+    state: Literal["ACTION_REQUIRED", "PUBLISHED", "FAILED"]
+    formatted_content: str
+    published_url: str | None
+    published_at: datetime | None
+    failure_reason: str | None
+
+
+class PublishConfirmation(BaseModel):
+    published_url: str | None = Field(default=None, max_length=2_000)
+    published_at: datetime | None = None
+
+
+class PublishFailure(BaseModel):
+    reason: str = Field(min_length=3, max_length=2_000)
+
+
+class PreferenceOutput(BaseModel):
+    id: str
+    category: str
+    instruction: str
+    evidence_count: int
+    active: bool
+    version: int
+    updated_at: datetime
+
+
+class PreferenceUpdate(BaseModel):
+    active: bool

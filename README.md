@@ -2,7 +2,7 @@
 
 Liproser is a personal-first AI system for improving a LinkedIn profile and building a repeatable, evidence-aware content workflow. It starts as the founder's private operating system; capabilities are generalized into SaaS features only after sustained personal use demonstrates value.
 
-> **Current status:** `v0.1` and all `v0.2A–D` slices are implemented for local personal use: profile optimization, voice setup, grounded drafting, human review, and eligible first-party memory. Calendar/reminder work is next in `v0.3`.
+> **Current status:** `v0.1`, all `v0.2A–D` slices, and `v0.3` are implemented for local personal use: profile optimization, grounded content review, first-party memory, calendar scheduling, manual publish reminders, and reversible feedback learning. Manual analytics and explainable prediction are next in `v0.4`.
 
 ## What Liproser will do
 
@@ -93,13 +93,14 @@ pwsh -NoProfile -File scripts/verify-repository.ps1
 
 The script validates required files, local Markdown links, code fences, environment keys, JSONL evaluation fixtures, forbidden tracked secret files, and common credential patterns. GitHub Actions runs the same checks for pushes and pull requests with read-only repository permissions.
 
-Application-specific setup and tests will be added with the first vertical slice. A feature is pushed only after relevant tests pass and the diff is reviewed.
+Application setup and release-slice tests live alongside the implementation. A feature is pushed only after relevant tests pass and the diff is reviewed.
 
-Start PostgreSQL using `DATABASE_URL`, apply the schema, then run API and web in separate PowerShell terminals:
+Start PostgreSQL and Redis using `DATABASE_URL` and `REDIS_URL`, apply the schema, then run the API, worker, and web in separate PowerShell terminals. On Windows, follow Redis' [official Docker installation path](https://redis.io/docs/latest/operate/oss_and_stack/install/install-stack/). Arq is isolated behind the worker boundary because its upstream project is [maintenance-only](https://github.com/python-arq/arq); a later queue replacement does not change domain workflows.
 
 ```powershell
 & '.\.venv\Scripts\alembic.exe' upgrade head
 & '.\.venv\Scripts\python.exe' -m uvicorn liproser.main:app --app-dir apps/api --host 127.0.0.1 --port 8000 --reload
+& '.\.venv\Scripts\python.exe' -m arq liproser.worker.WorkerSettings
 pnpm --filter @liproser/web dev
 ```
 
@@ -128,6 +129,10 @@ The review slice adds immutable human edits and regenerations, stored field-leve
 ## Implemented `v0.2D` slice
 
 The memory slice stores a versioned local hash embedding for an exact approved revision in PostgreSQL `pgvector`, with a JSON-compatible SQLite adapter for tests and lightweight local development. Retrieval first filters workspace, approval validity, latest revision, state, and taxonomy, then ranks eligible posts and records revision IDs, similarity scores, taxonomy versions, and embedding versions on every generated revision. The writer receives structural features rather than reusable post text. Originality is a blocking full-corpus comparison; exact hook repetition is surfaced as a diversity warning. The Library screen shows only currently eligible first-party revisions, and editing an approved unpublished revision removes it immediately. No third-party post ingestion or scraping is included.
+
+## Implemented `v0.3` slice
+
+The workflow now creates balanced timezone-aware calendar slots while respecting quiet days, schedules only an exact approved revision, and stores both intended local time and resolved UTC time. Scheduling and approval events commit through a transactional outbox. A Redis/Arq worker dispatches deferred reminders with idempotent job receipts and bounded dead-letter handling. The manual publish action exposes formatted copy but requires the owner to publish and explicitly confirm the URL/time; editing beforehand cancels the schedule and invalidates the action. Published immutable revisions stay in first-party memory. Repeated structured feedback creates an inspectable preference after two matching signals, and each rule can be disabled or re-enabled. No LinkedIn automation is used.
 
 ## License
 

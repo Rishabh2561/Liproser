@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     app_bind_host: str = "127.0.0.1"
     database_url: str = "postgresql+psycopg://liproser:liproser@127.0.0.1:5432/liproser"
     private_storage_root: Path = Path("data/private")
+    redis_url: str = "redis://127.0.0.1:6379/0"
     ai_provider: str = "unconfigured"
     ai_monthly_budget_usd: float = 10.0
     ai_budget_warning_percent: int = 80

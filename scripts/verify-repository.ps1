@@ -97,6 +97,7 @@ try {
         'ANTHROPIC_API_KEY',
         'ANTHROPIC_MODEL',
         'DATABASE_URL',
+        'REDIS_URL',
         'PRIVATE_STORAGE_ROOT',
         'LINKEDIN_INTEGRATION_ENABLED'
     )

@@ -22,8 +22,13 @@ type VoiceProfile = { id:string; version:number; domain:string; target_audience:
 type EvidenceDraft = { statement:string; source_url:string; freshness_date:string };
 type ContentIdea = { id:string; taxonomy_version:string; pillar:string; topic:string; angle:string; audience_intent:string; evidence:{id:string;statement:string;source_url?:string|null;freshness_date?:string|null}[] };
 type ReviewCategory = "HOOK"|"TONE"|"CLARITY"|"CTA"|"LENGTH"|"EVIDENCE";
-type PrimaryDraft = { post_id:string; revision_id:string; revision_number:number; state:"DRAFT"|"IN_REVIEW"|"CHANGES_REQUESTED"|"REJECTED"|"APPROVED"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"|"human_edit"; generation_warning?:string|null; retrievals:{revision_id:string;topic:string;pillar:string;similarity_score:number;embedding_version:string;features:Record<string,string|number>}[]; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION"|"CONFIRMED_PERSONAL";source_reference_ids:string[]}[]; checks:{id:string;check_type:string;severity:"BLOCKING"|"WARNING";passed:boolean;message:string}[]; reviews:{id:string;revision_id:string;revision_number:number;action:string;reason?:string|null;categories:string[];created_at:string}[] };
+type PrimaryDraft = { post_id:string; revision_id:string; revision_number:number; state:"DRAFT"|"IN_REVIEW"|"CHANGES_REQUESTED"|"REJECTED"|"APPROVED"|"SCHEDULED"|"PUBLISH_ACTION_REQUIRED"|"PUBLISHED"|"FAILED"; hook:string; body:string; cta:string; content:string; pillar:string; topic:string; taxonomy_version:string; generation_model:string; generation_mode:"provider"|"deterministic_fallback"|"human_edit"; generation_warning?:string|null; retrievals:{revision_id:string;topic:string;pillar:string;similarity_score:number;embedding_version:string;features:Record<string,string|number>}[]; claims:{id:string;claim_text:string;kind:"SUPPORTED"|"OPINION"|"CONFIRMED_PERSONAL";source_reference_ids:string[]}[]; checks:{id:string;check_type:string;severity:"BLOCKING"|"WARNING";passed:boolean;message:string}[]; reviews:{id:string;revision_id:string;revision_number:number;action:string;reason?:string|null;categories:string[];created_at:string}[] };
 type MemoryRevision = { revision_id:string; post_id:string; revision_number:number; pillar:string; topic:string; taxonomy_version:string; embedding_version:string; features:{hook_style:string;word_count:number;paragraph_count:number;cta_style:string}; approved_at:string };
+type CalendarSlot = {id:string;position:number;pillar:string;intended_local_at:string;resolved_utc_at:string;status:"PLANNED"|"ASSIGNED"|"CANCELLED"};
+type ContentCalendar = {id:string;start_date:string;weeks:number;cadence_per_week:number;timezone:string;quiet_days:string[];slots:CalendarSlot[]};
+type PostSchedule = {id:string;post_id:string;revision_id:string;calendar_slot_id?:string|null;timezone:string;intended_local_at:string;resolved_utc_at:string;status:"ACTIVE"|"REMINDER_DUE"|"COMPLETED"|"CANCELLED"|"FAILED"};
+type PublishAction = {id:string;schedule_id:string;post_id:string;revision_id:string;state:"ACTION_REQUIRED"|"PUBLISHED"|"FAILED";formatted_content:string;published_url?:string|null};
+type Preference = {id:string;category:string;instruction:string;evidence_count:number;active:boolean;version:number};
 
 const splitList = (value: string) => value.split(/[,\n]/).map(item=>item.trim()).filter(Boolean);
 
@@ -68,6 +73,16 @@ export default function Home() {
   const [reviewCategories, setReviewCategories] = useState<ReviewCategory[]>([]);
   const [rejectionReason, setRejectionReason] = useState("");
   const [memoryRevisions, setMemoryRevisions] = useState<MemoryRevision[]>([]);
+  const [calendar, setCalendar] = useState<ContentCalendar|null>(null);
+  const [calendarStart, setCalendarStart] = useState(()=>new Date(Date.now()+86400000).toISOString().slice(0,10));
+  const [calendarWeeks, setCalendarWeeks] = useState(4);
+  const [calendarCadence, setCalendarCadence] = useState(3);
+  const [calendarTimezone, setCalendarTimezone] = useState(()=>Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  const [calendarMessage, setCalendarMessage] = useState("Plan a balanced calendar, then assign an approved revision.");
+  const [schedules, setSchedules] = useState<PostSchedule[]>([]);
+  const [publishAction, setPublishAction] = useState<PublishAction|null>(null);
+  const [publishedUrl, setPublishedUrl] = useState("");
+  const [preferences, setPreferences] = useState<Preference[]>([]);
   const filledSections = Object.values(sections).filter(value => value.trim()).length;
   const completeness = Math.round((filledSections / Object.keys(sections).length) * 100);
 
@@ -94,11 +109,57 @@ export default function Home() {
       setVoiceMessage(`Voice profile v${data.version} is ready.`);
     }).catch(()=>undefined);
     refreshMemory();
+    refreshCalendar();
   }, []);
 
   async function refreshMemory() {
     const response = await fetch(`${API}/v1/memory/revisions`).catch(()=>null);
     if (response?.ok) setMemoryRevisions(await response.json());
+  }
+
+  async function refreshCalendar() {
+    const [calendarResponse,scheduleResponse,actionResponse,preferenceResponse] = await Promise.all([
+      fetch(`${API}/v1/calendars/current`).catch(()=>null),fetch(`${API}/v1/schedules`).catch(()=>null),fetch(`${API}/v1/publish-actions`).catch(()=>null),fetch(`${API}/v1/feedback/preferences`).catch(()=>null),
+    ]);
+    if (calendarResponse?.ok) setCalendar(await calendarResponse.json());
+    if (scheduleResponse?.ok) setSchedules(await scheduleResponse.json());
+    if (actionResponse?.ok) { const items=await actionResponse.json(); setPublishAction(items[0]??null); }
+    if (preferenceResponse?.ok) setPreferences(await preferenceResponse.json());
+  }
+
+  async function planCalendar(event:FormEvent) {
+    event.preventDefault();
+    if (!voiceProfile) return setCalendarMessage("Save your voice profile before planning.");
+    const response=await fetch(`${API}/v1/calendars`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({start_date:calendarStart,weeks:calendarWeeks,cadence_per_week:calendarCadence,timezone:calendarTimezone,quiet_days:["SATURDAY","SUNDAY"]})});
+    const data=await response.json();
+    if (!response.ok) return setCalendarMessage(data.detail??"Calendar could not be created.");
+    setCalendar(data); setCalendarMessage(`${data.slots.length} balanced slots created. Weekends remain quiet.`);
+  }
+
+  async function scheduleApproved(slot:CalendarSlot) {
+    if (!primaryDraft || primaryDraft.state!=="APPROVED") return setCalendarMessage("Approve the exact current revision first.");
+    const response=await fetch(`${API}/v1/posts/${primaryDraft.post_id}/schedules`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:primaryDraft.revision_id,intended_local_at:slot.intended_local_at,timezone:calendar?.timezone,calendar_slot_id:slot.id,idempotency_key:`slot-${slot.id}-${primaryDraft.revision_id}`})});
+    const data=await response.json();
+    if (!response.ok) return setCalendarMessage(data.detail??"The revision could not be scheduled.");
+    setSchedules(current=>[...current.filter(item=>item.id!==data.id),data]); setCalendar(current=>current?{...current,slots:current.slots.map(item=>item.id===slot.id?{...item,status:"ASSIGNED"}:item)}:current); setPrimaryDraft({...primaryDraft,state:"SCHEDULED"}); setCalendarMessage("Exact approved revision scheduled. Editing it will cancel this schedule.");
+  }
+
+  async function preparePublish(item:PostSchedule) {
+    const response=await fetch(`${API}/v1/schedules/${item.id}/publish-now`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({revision_id:item.revision_id,idempotency_key:`publish-${item.id}`})});
+    const data=await response.json(); if(!response.ok)return setCalendarMessage(data.detail??"Publish action could not be prepared.");
+    setPublishAction(data); if(primaryDraft)setPrimaryDraft({...primaryDraft,state:"PUBLISH_ACTION_REQUIRED"}); setCalendarMessage("Copy the formatted post, publish it yourself, then confirm below.");
+  }
+
+  async function confirmPublished() {
+    if(!publishAction)return;
+    const response=await fetch(`${API}/v1/publish-actions/${publishAction.id}/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({published_url:publishedUrl.trim()||null})});
+    const data=await response.json(); if(!response.ok)return setCalendarMessage(data.detail??"Publication could not be confirmed.");
+    setPublishAction(data); if(primaryDraft)setPrimaryDraft({...primaryDraft,state:"PUBLISHED"}); await refreshMemory(); setCalendarMessage("Publication confirmed. Analytics can be added in v0.4.");
+  }
+
+  async function togglePreference(item:Preference) {
+    const response=await fetch(`${API}/v1/feedback/preferences/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({active:!item.active})});
+    if(response.ok){const updated=await response.json();setPreferences(current=>current.map(value=>value.id===updated.id?updated:value));}
   }
 
   function chooseProvider(value: string) {
@@ -329,7 +390,7 @@ export default function Home() {
         <a className="nav-item active" href="#profile"><span>01</span>Profile lab</a>
         <a className="nav-item" href="#voice"><span>02</span>Voice setup<small>v0.2</small></a>
         <a className="nav-item" href="#library"><span>03</span>Library<small>v0.2D</small></a>
-        <span className="nav-item disabled"><span>04</span>Calendar<small>v0.3</small></span>
+        <a className="nav-item" href="#calendar"><span>04</span>Calendar<small>v0.3</small></a>
         <span className="nav-item disabled"><span>05</span>Analytics<small>v0.4</small></span>
       </nav>
       <div className="privacy-card"><span className="privacy-icon">✓</span><strong>Private by design</strong><p>Your profile remains on this machine. Nothing publishes automatically.</p></div>
@@ -472,7 +533,23 @@ export default function Home() {
         {memoryRevisions.length === 0 ? <div className="studio-locked"><strong>No eligible revisions yet</strong><p>Approve a reviewed draft to add it. Drafts and rejected posts never enter memory.</p></div> : <div className="memory-grid">{memoryRevisions.map(item=><article key={item.revision_id}><div><span>{item.pillar}</span><span>Revision {item.revision_number}</span></div><h3>{item.topic}</h3><p>{item.features.word_count} words · {item.features.paragraph_count} paragraphs · {item.features.hook_style.toLowerCase()} hook · {item.features.cta_style.toLowerCase()} CTA</p><small>{item.embedding_version} · {item.taxonomy_version}</small></article>)}</div>}
       </section>
 
-      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.2D · Data stays local</small></footer>
+      <section className="calendar-section" id="calendar">
+        <div className="studio-heading"><div><p className="eyebrow">CALENDAR & REMINDERS · v0.3</p><h2>Turn approved ideas into a dependable rhythm.</h2><p>Plan around your timezone and quiet days. A schedule belongs to one exact approved revision; Liproser never publishes for you.</p></div><span className="draft-limit">Human publish only</span></div>
+        <form className="calendar-form" onSubmit={planCalendar}>
+          <label><span>Start date</span><input aria-label="Calendar start date" type="date" value={calendarStart} onChange={event=>setCalendarStart(event.target.value)} required/></label>
+          <label><span>Weeks</span><input aria-label="Calendar weeks" type="number" min="1" max="8" value={calendarWeeks} onChange={event=>setCalendarWeeks(Number(event.target.value))}/></label>
+          <label><span>Posts per week</span><input aria-label="Calendar cadence" type="number" min="1" max="5" value={calendarCadence} onChange={event=>setCalendarCadence(Number(event.target.value))}/></label>
+          <label><span>IANA timezone</span><input aria-label="Calendar timezone" value={calendarTimezone} onChange={event=>setCalendarTimezone(event.target.value)} required/></label>
+          <button className="button primary" type="submit">Plan calendar</button><p role="status">{calendarMessage}</p>
+        </form>
+        {calendar && <div className="calendar-grid">{calendar.slots.map(slot=><article key={slot.id} className={slot.status.toLowerCase()}><div><span>Slot {slot.position}</span><b>{slot.status}</b></div><strong>{slot.pillar}</strong><time>{new Date(slot.resolved_utc_at).toLocaleString([], {dateStyle:"medium",timeStyle:"short",timeZone:calendar.timezone})}</time>{slot.status==="PLANNED" && primaryDraft?.state==="APPROVED" && <button className="button accent" onClick={()=>scheduleApproved(slot)}>Schedule approved revision</button>}</article>)}</div>}
+        {schedules.length>0 && <div className="schedule-list"><strong>Schedules</strong>{schedules.map(item=><article key={item.id}><div><span>{item.status.replaceAll("_"," ")}</span><time>{new Date(item.resolved_utc_at).toLocaleString()}</time></div>{item.status==="ACTIVE"&&<button className="button outline" onClick={()=>preparePublish(item)}>Prepare copy & publish now</button>}</article>)}</div>}
+        {publishAction?.state==="ACTION_REQUIRED" && <div className="publish-panel"><div><strong>Ready for your manual publish</strong><span>No automatic LinkedIn action occurs.</span></div><textarea readOnly value={publishAction.formatted_content} rows={8} aria-label="Formatted post to copy"/><button className="button accent" onClick={()=>navigator.clipboard.writeText(publishAction.formatted_content)}>Copy formatted post</button><label><span>Published post URL <small>optional</small></span><input aria-label="Published post URL" value={publishedUrl} onChange={event=>setPublishedUrl(event.target.value)} placeholder="https://www.linkedin.com/feed/update/…"/></label><button className="button primary" onClick={confirmPublished}>I published this exact revision</button></div>}
+        {publishAction?.state==="PUBLISHED" && <p className="publication-confirmed">✓ Publication confirmed by you. {publishAction.published_url&&<a href={publishAction.published_url}>Open recorded post</a>}</p>}
+        <div className="preference-panel"><div><strong>Learned preferences</strong><span>Created only after two matching feedback signals; every rule is reversible.</span></div>{preferences.length===0?<p>No repeated preference signals yet.</p>:preferences.map(item=><article key={item.id}><div><strong>{item.category.replaceAll("_"," ")}</strong><small>{item.evidence_count} signals · version {item.version}</small><p>{item.instruction}</p></div><button className={`preference-toggle ${item.active?"active":""}`} onClick={()=>togglePreference(item)}>{item.active?"Enabled":"Disabled"}</button></article>)}</div>
+      </section>
+
+      <footer><strong>Liproser</strong><span>Evidence over exaggeration.</span><small>Personal edition · v0.3 · Data stays local</small></footer>
     </main>
   </div>;
 }

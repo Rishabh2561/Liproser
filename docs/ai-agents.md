@@ -88,7 +88,7 @@ Finds patterns only in the user's eligible tagged revisions. Inputs are structur
 
 ### Feedback Synthesizer (`v0.3`)
 
-Converts edit deltas, regeneration instructions, approvals, and rejections into candidate preferences. It separates situational from durable signals and identifies conflicts. A single action is weak evidence; durable preferences require repeated signals or explicit confirmation. Application rules create immutable, inspectable voice-profile versions. This agent never initiates training.
+Converts edit deltas, regeneration instructions, approvals, and rejections into candidate preferences. In `v0.3`, this is a deterministic category-counting implementation: one action remains weak evidence and a preference appears only after two matching signals. Rules are versioned, inspectable, and reversible; no model changes the voice profile automatically. A later bounded agent may separate situational from durable signals and identify conflicts, but it will never initiate training.
 
 ### Performance Explainer (`v0.4`)
 
